@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { GoogleSheetConnectorService } from '@icetee/nest-google-sheet-connector';
-import { CalendarEventDto } from './dto/calendar-event.dto';
+import { CalendarEventDto } from '../calendar/dto/calendar-event.dto'; 
+
 const EVENT_ID_COLUMN_INDEX = 12;
 
 export interface SyncResult {
@@ -37,7 +38,7 @@ export class SheetsService {
       this.formatDate(event.date),
       event.time ?? '',
       event.location ?? '',
-      event.interviewers ?? '',
+      Array.isArray(event.interviewers) ? event.interviewers.join(', ') : event.interviewers ?? '',
       event.recruiter ?? '',
       event.contactNumber ?? '',
       event.emailAddress ?? '',
@@ -45,9 +46,16 @@ export class SheetsService {
       event.eventId,
     ];
   }
-
   private formatDate(date: string | Date | undefined): string {
     if (!date) return '';
+
+    if (typeof date === 'string') {
+      const isoMatch = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (isoMatch) {
+        const [, year, month, day] = isoMatch;
+        return `${day}/${month}/${year}`;
+      }
+    }
 
     const parsed = typeof date === 'string' ? new Date(date) : date;
 
