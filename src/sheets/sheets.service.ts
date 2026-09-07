@@ -1,11 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { GoogleSheetConnectorService } from '@icetee/nest-google-sheet-connector';
 import { CalendarEventDto } from './dto/calendar-event.dto';
-
-// Column index 12 (13th column) is Event ID — the duplicate-prevention key.
-// Keep the column mapping in ONE place. If Member 1's DTO field names
-// differ slightly, or the sheet layout changes, this is the only place
-// to update (see eventToRow() below).
 const EVENT_ID_COLUMN_INDEX = 12;
 
 export interface SyncResult {
@@ -17,9 +12,6 @@ export interface SyncResult {
 export class SheetsService {
   constructor(private readonly sheetConnector: GoogleSheetConnectorService) {}
 
-  // Read these lazily (inside methods, not as top-level consts) so they're
-  // evaluated AFTER ConfigModule has loaded .env — reading process.env at
-  // module-import time happens before dotenv runs and returns undefined.
   private getSpreadsheetId(): string {
     const id = process.env.GOOGLE_SHEET_ID;
     if (!id) {
