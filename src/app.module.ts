@@ -1,11 +1,16 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { ConfigModule } from '@nestjs/config';
 import { GoogleAuthModule } from './google-auth/google-auth.module';
 import { CalendarModule } from './calendar/calendar.module';
 
 @Module({
-  imports: [GoogleAuthModule, CalendarModule ],
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    GoogleAuthModule,
+    CalendarModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })
