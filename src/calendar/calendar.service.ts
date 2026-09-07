@@ -4,22 +4,16 @@ import { GoogleCalendarService } from '@qte/nest-google-calendar';
 import { GoogleAuthService } from '../google-auth/google-auth.service';
 import { CalendarEventDto } from './dto/calendar-event.dto';
 
-// Basic patterns used to pull structured info out of free-text descriptions.
 const PHONE_REGEX = /(\+?\d[\d\s\-()]{7,}\d)/;
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-// "Resume:" or "CV:" followed by any link, checked before a bare Drive/Docs link.
 const RESUME_LABEL_LINK_REGEX = /(?:resume|cv)\s*:?\s*(https?:\/\/\S+)/i;
 const DRIVE_LINK_REGEX = /(https?:\/\/(?:drive|docs)\.google\.com\/\S+)/i;
-// "Interviewer: Name1, Name2" — lets you name interviewers directly in the
-// description instead of relying on who was invited as a calendar guest.
 const INTERVIEWER_LINE_REGEX = /interviewers?\s*:\s*(.+)/i;
 
 @Injectable()
 export class CalendarService {
   private readonly logger = new Logger(CalendarService.name);
 
-  // Configurable via .env (HR_SCHEDULING_EMAIL). Defaults to the real
-  // production address used by Folio3's HR scheduling.
   private readonly HR_SCHEDULING_EMAIL: string;
 
   constructor(
@@ -31,12 +25,6 @@ export class CalendarService {
       this.configService.get<string>('HR_SCHEDULING_EMAIL') || 'hr-scheduling@folio3.com';
   }
 
-  /**
-   * Fetches events in [timeMin, timeMax] using @qte/nest-google-calendar,
-   * keeps only interview events where HR_SCHEDULING_EMAIL is a guest, and
-   * maps each into a CalendarEventDto for downstream modules (Sheets,
-   * Drive, AI-testing) to consume.
-   */
   async getInterviewEvents(
     timeMin: Date = new Date(),
     timeMax: Date = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // next 30 days
@@ -48,6 +36,7 @@ export class CalendarService {
       timeMax,
       access_token,
     });
+
 
     const hrEvents = (events || []).filter((event) => this.hasHrScheduling(event));
 
@@ -66,12 +55,43 @@ export class CalendarService {
     );
   }
 
-  /**
-   * Parses one raw Google Calendar event into a CalendarEventDto.
-   * Subject format expected: "Candidate | Position | Stage | Type"
-   * Returns null (and logs) if the subject doesn't match, so one malformed
-   * event doesn't crash the whole batch.
-   */
+  private cleanDescription(raw: string): string {
+    if (!raw) return '';
+
+    return raw
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<a[^>]*href=["']([^"']+)["'][^>]*>.*?<\/a>/gis, '$1')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .trim();
+  }
+
+  
+  private extractAttachmentResumeLink(event: any): string {
+    const attachments = event.attachments || [];
+    if (attachments.length === 0) return '';
+
+    const resumeLike = attachments.find((a: any) => {
+      const title = (a.title || '').toLowerCase();
+      const mime = (a.mimeType || '').toLowerCase();
+      return (
+        title.includes('resume') ||
+        title.includes('cv') ||
+        mime.includes('pdf') ||
+        mime.includes('word') ||
+        mime.includes('document')
+      );
+    });
+
+    const chosen = resumeLike || attachments[0]; // fallback: first attachment
+    return chosen.fileUrl || '';
+  }
+
   private mapToDto(event: any): CalendarEventDto | null {
     const summary: string = event.summary || '';
     const parts = summary.split('|').map((p: string) => p.trim());
@@ -93,11 +113,8 @@ export class CalendarService {
 
     const attendees = event.attendees || [];
     const attendeeEmails: string[] = attendees.map((a: any) => a.email).filter(Boolean);
-    const description: string = event.description || '';
+    const description: string = this.cleanDescription(event.description || '');
 
-    // Prefer an explicit "Interviewer: ..." line in the description — more
-    // reliable than guessing from calendar guests, and works even for
-    // interviewers without a Google account.
     const interviewerLineMatch = description.match(INTERVIEWER_LINE_REGEX);
     const interviewers = interviewerLineMatch
       ? interviewerLineMatch[1].split(',').map((name) => name.trim()).filter(Boolean)
@@ -111,7 +128,9 @@ export class CalendarService {
 
     const phoneMatch = description.match(PHONE_REGEX);
     const emailMatches = description.match(EMAIL_REGEX) || [];
-    const resumeLink = this.extractResumeLink(description);
+
+    const resumeLink =
+      this.extractAttachmentResumeLink(event) || this.extractResumeLink(description);
 
     return {
       candidateName,
@@ -130,14 +149,12 @@ export class CalendarService {
     };
   }
 
-  /** Organizer is usually the recruiter who scheduled the interview. */
   private extractRecruiter(event: any, attendees: any[]): string {
     if (event.organizer?.email) return event.organizer.email;
     const recruiterAttendee = attendees.find((a: any) => a.organizer);
     return recruiterAttendee?.email || '';
   }
 
-  /** Best-effort guess so the candidate isn't double-listed as an "interviewer". */
   private guessCandidateEmail(event: any, attendees: any[]): string {
     const candidate = attendees.find(
       (a: any) => !a.organizer && (a.responseStatus === 'needsAction' || a.resource !== true),
@@ -145,7 +162,6 @@ export class CalendarService {
     return (candidate?.email || '').toLowerCase();
   }
 
-  /** Finds a resume/CV link in the description, if any is present. */
   private extractResumeLink(description: string): string {
     const labeled = description.match(RESUME_LABEL_LINK_REGEX);
     if (labeled) return labeled[1];
