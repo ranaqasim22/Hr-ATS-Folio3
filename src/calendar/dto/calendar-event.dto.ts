@@ -1,9 +1,4 @@
-/**
- * CalendarEventDto
- * -----------------
- * Data contract produced by CalendarService.
- * Other members (Sheets, Drive/Resume, AI testing) consume this shape.
- */
+
 export class CalendarEventDto {
   candidateName: string;
   position: string;
