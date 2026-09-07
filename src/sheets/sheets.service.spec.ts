@@ -1,7 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { GoogleSheetConnectorService } from '@icetee/nest-google-sheet-connector';
 import { SheetsService } from './sheets.service';
-import { CalendarEventDto } from './dto/calendar-event.dto';
+import { CalendarEventDto } from '../calendar/dto/calendar-event.dto';
+process.env.GOOGLE_SHEET_ID = 'test-spreadsheet-id';
 
 describe('SheetsService', () => {
   let service: SheetsService;
@@ -16,10 +17,10 @@ describe('SheetsService', () => {
     position: 'Software Engineer',
     interviewStage: 'Technical Interview',
     type: 'Online',
-    date: '05/09/2026',
-    time: '03:00 PM',
+    date: '2026-09-05',
+    time: '15:00',
     location: 'Google Meet',
-    interviewers: 'John Doe',
+    interviewers: ['John Doe', 'Jane Smith'],
     recruiter: 'HR Team',
     contactNumber: '03000000000',
     emailAddress: 'test@example.com',
@@ -84,28 +85,25 @@ describe('SheetsService', () => {
     expect(mockConnector.writeRange).toHaveBeenCalledTimes(2);
   });
 
-  it('Test 4: formats a Date object as dd/mm/yyyy before writing', async () => {
+  it('Test 4: formats an ISO date string as dd/mm/yyyy before writing', async () => {
     mockConnector.readRange
       .mockResolvedValueOnce([['header']])
       .mockResolvedValueOnce([['header'], [...Array(12).fill(''), 'test-event-001']]);
 
-    const eventWithDateObject: CalendarEventDto = {
-      ...mockEvent,
-      date: new Date(2026, 8, 5), // month is 0-indexed → September
-    };
-
-    await service.syncEvent(eventWithDateObject);
+    await service.syncEvent({ ...mockEvent, date: '2026-09-05' });
 
     const [, , rowsArg] = mockConnector.addRow.mock.calls[0];
-    expect(rowsArg[0][4]).toBe('05/09/2026'); // date is column index 4
+    expect(rowsArg[0][4]).toBe('05/09/2026');
   });
 
-  it('Test 5: missing optional fields do not crash the service', async () => {
+  it('Test 5: missing optional-in-practice values do not crash the service', async () => {
     mockConnector.readRange
       .mockResolvedValueOnce([['header']])
       .mockResolvedValueOnce([['header'], [...Array(12).fill(''), 'minimal-event']]);
 
-    const minimalEvent: CalendarEventDto = { eventId: 'minimal-event' };
+    const minimalEvent = {
+      eventId: 'minimal-event',
+    } as CalendarEventDto;
 
     await expect(service.syncEvent(minimalEvent)).resolves.toBeDefined();
   });
