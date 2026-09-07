@@ -3,9 +3,12 @@ import { GoogleSheetModule } from '@icetee/nest-google-sheet-connector';
 import * as fs from 'fs';
 import * as path from 'path';
 import { SheetsService } from './sheets.service';
+import { SheetsController } from './sheets.controller';
+import { CalendarModule } from '../calendar/calendar.module';
 
 @Module({
   imports: [
+    CalendarModule, 
     GoogleSheetModule.registerAsync({
       useFactory: () => {
         const keyPath = process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_KEY_PATH;
@@ -22,7 +25,8 @@ import { SheetsService } from './sheets.service';
       },
     }),
   ],
+  controllers: [SheetsController],
   providers: [SheetsService],
-  exports: [SheetsService], // so Member 4's future TrackerService can inject this
+  exports: [SheetsService],
 })
 export class SheetsModule {}
