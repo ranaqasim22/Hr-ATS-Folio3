@@ -23,6 +23,6 @@ import { SheetsService } from './sheets.service';
     }),
   ],
   providers: [SheetsService],
-  exports: [SheetsService],
+  exports: [SheetsService], // so Member 4's future TrackerService can inject this
 })
 export class SheetsModule {}

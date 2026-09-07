@@ -2,10 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { GoogleSheetConnectorService } from '@icetee/nest-google-sheet-connector';
 import { CalendarEventDto } from './dto/calendar-event.dto';
 
-const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID as string;
-const SHEET_NAME = process.env.GOOGLE_SHEET_NAME || 'Sheet1';
+// Column index 12 (13th column) is Event ID — the duplicate-prevention key.
+// Keep the column mapping in ONE place. If Member 1's DTO field names
+// differ slightly, or the sheet layout changes, this is the only place
+// to update (see eventToRow() below).
 const EVENT_ID_COLUMN_INDEX = 12;
-const DATA_RANGE = `${SHEET_NAME}!A:M`;
 
 export interface SyncResult {
   action: 'created' | 'updated';
@@ -15,6 +16,26 @@ export interface SyncResult {
 @Injectable()
 export class SheetsService {
   constructor(private readonly sheetConnector: GoogleSheetConnectorService) {}
+
+  // Read these lazily (inside methods, not as top-level consts) so they're
+  // evaluated AFTER ConfigModule has loaded .env — reading process.env at
+  // module-import time happens before dotenv runs and returns undefined.
+  private getSpreadsheetId(): string {
+    const id = process.env.GOOGLE_SHEET_ID;
+    if (!id) {
+      throw new Error('GOOGLE_SHEET_ID is not set in .env');
+    }
+    return id;
+  }
+
+  private getSheetName(): string {
+    return process.env.GOOGLE_SHEET_NAME || 'Sheet1';
+  }
+
+  private getDataRange(): string {
+    return `${this.getSheetName()}!A:M`;
+  }
+
   private eventToRow(event: CalendarEventDto): any[] {
     return [
       event.candidateName ?? '',
@@ -50,7 +71,10 @@ export class SheetsService {
   }
 
   async findRowByEventId(eventId: string): Promise<number | null> {
-    const rows = await this.sheetConnector.readRange(SPREADSHEET_ID, DATA_RANGE);
+    const rows = await this.sheetConnector.readRange(
+      this.getSpreadsheetId(),
+      this.getDataRange(),
+    );
 
     if (!rows) return null;
 
@@ -63,13 +87,23 @@ export class SheetsService {
 
   async appendRow(event: CalendarEventDto): Promise<void> {
     const row = this.eventToRow(event);
-    await this.sheetConnector.addRow(SPREADSHEET_ID, DATA_RANGE, [row], 'USER_ENTERED');
+    await this.sheetConnector.addRow(
+      this.getSpreadsheetId(),
+      this.getDataRange(),
+      [row],
+      'USER_ENTERED',
+    );
   }
 
   async updateRow(rowIndex: number, event: CalendarEventDto): Promise<void> {
     const row = this.eventToRow(event);
-    const range = `${SHEET_NAME}!A${rowIndex}:M${rowIndex}`;
-    await this.sheetConnector.writeRange(SPREADSHEET_ID, range, [row], 'USER_ENTERED');
+    const range = `${this.getSheetName()}!A${rowIndex}:M${rowIndex}`;
+    await this.sheetConnector.writeRange(
+      this.getSpreadsheetId(),
+      range,
+      [row],
+      'USER_ENTERED',
+    );
   }
 
   async syncEvent(event: CalendarEventDto): Promise<SyncResult> {
