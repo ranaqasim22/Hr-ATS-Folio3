@@ -54,6 +54,21 @@ export class CalendarService {
     );
   }
 
+private cleanDescription(raw: string): string {
+  if (!raw) return '';
+
+  return raw
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<a[^>]*href=["']([^"']+)["'][^>]*>.*?<\/a>/gis, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .trim();
+}
  
   private mapToDto(event: any): CalendarEventDto | null {
     const summary: string = event.summary || '';
@@ -76,7 +91,7 @@ export class CalendarService {
 
     const attendees = event.attendees || [];
     const attendeeEmails: string[] = attendees.map((a: any) => a.email).filter(Boolean);
-    const description: string = event.description || '';
+    const description: string = this.cleanDescription(event.description || '');
 
   
     const interviewerLineMatch = description.match(INTERVIEWER_LINE_REGEX);
