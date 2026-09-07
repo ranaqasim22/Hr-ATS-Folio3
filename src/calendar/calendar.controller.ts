@@ -6,9 +6,6 @@ import { CalendarEventDto } from './dto/calendar-event.dto';
 export class CalendarController {
   constructor(private readonly calendarService: CalendarService) {}
 
-  // GET /calendar/events?from=2026-09-01&to=2026-09-30
-  // Manual test endpoint — lets you (and reviewers) verify the module
-  // works without waiting for Member 4's cron job to be built.
   @Get('events')
   async getEvents(
     @Query('from') from?: string,
