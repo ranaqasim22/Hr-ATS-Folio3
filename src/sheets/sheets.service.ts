@@ -2,6 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { google } from 'googleapis';
 import { ConfigService } from '@nestjs/config';
 import { CalendarEventDto } from '../calendar/dto/calendar-event.dto';
+import { Injectable } from '@nestjs/common';
+import { GoogleSheetConnectorService } from '@icetee/nest-google-sheet-connector';
+import { CalendarEventDto } from '../calendar/dto/calendar-event.dto'; 
 
 const EVENT_ID_COLUMN_INDEX = 12;
 
@@ -47,6 +50,10 @@ export class SheetsService {
 
   private getSpreadsheetId(): string {
     const id = this.configService.get<string>('GOOGLE_SHEET_ID');
+  constructor(private readonly sheetConnector: GoogleSheetConnectorService) {}
+
+  private getSpreadsheetId(): string {
+    const id = process.env.GOOGLE_SHEET_ID;
     if (!id) {
       throw new Error('GOOGLE_SHEET_ID is not set in .env');
     }
@@ -55,6 +62,7 @@ export class SheetsService {
 
   private getSheetName(): string {
     return this.configService.get<string>('GOOGLE_SHEET_NAME') || 'Sheet1';
+    return process.env.GOOGLE_SHEET_NAME || 'Sheet1';
   }
 
   private getDataRange(): string {
@@ -73,6 +81,7 @@ export class SheetsService {
       Array.isArray(event.interviewers) ? event.interviewers.join(', ') : event.interviewers ?? '',
       event.recruiter ?? '',
       event.contactNumber ? `'${event.contactNumber}` : '',
+      event.contactNumber ?? '',
       event.emailAddress ?? '',
       event.resumeLink ?? '',
       event.eventId,
@@ -81,6 +90,9 @@ export class SheetsService {
 
   private formatDate(date: string | Date | undefined): string {
     if (!date) return '';
+  private formatDate(date: string | Date | undefined): string {
+    if (!date) return '';
+
     if (typeof date === 'string') {
       const isoMatch = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
       if (isoMatch) {
@@ -95,6 +107,17 @@ export class SheetsService {
     const day = String(parsed.getDate()).padStart(2, '0');
     const month = String(parsed.getMonth() + 1).padStart(2, '0');
     const year = parsed.getFullYear();
+
+    const parsed = typeof date === 'string' ? new Date(date) : date;
+
+    if (isNaN(parsed.getTime())) {
+      return typeof date === 'string' ? date : '';
+    }
+
+    const day = String(parsed.getDate()).padStart(2, '0');
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const year = parsed.getFullYear();
+
     return `${day}/${month}/${year}`;
   }
 
@@ -107,6 +130,17 @@ export class SheetsService {
     const index = rows.findIndex(
       (row: any[], i: number) => i > 0 && row[EVENT_ID_COLUMN_INDEX] === eventId,
     );
+    const rows = await this.sheetConnector.readRange(
+      this.getSpreadsheetId(),
+      this.getDataRange(),
+    );
+
+    if (!rows) return null;
+
+    const index = rows.findIndex(
+      (row: any[], i: number) => i > 0 && row[EVENT_ID_COLUMN_INDEX] === eventId,
+    );
+
     return index === -1 ? null : index + 1;
   }
 
@@ -118,6 +152,12 @@ export class SheetsService {
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [row] },
     });
+    await this.sheetConnector.addRow(
+      this.getSpreadsheetId(),
+      this.getDataRange(),
+      [row],
+      'USER_ENTERED',
+    );
   }
 
   async updateRow(rowIndex: number, event: CalendarEventDto): Promise<void> {
@@ -129,6 +169,12 @@ export class SheetsService {
       valueInputOption: 'USER_ENTERED',
       requestBody: { values: [row] },
     });
+    await this.sheetConnector.writeRange(
+      this.getSpreadsheetId(),
+      range,
+      [row],
+      'USER_ENTERED',
+    );
   }
 
   async syncEvent(event: CalendarEventDto): Promise<SyncResult> {
@@ -136,12 +182,22 @@ export class SheetsService {
       throw new Error('eventId is required to sync an event to the sheet');
     }
     const existingRow = await this.findRowByEventId(event.eventId);
+
+    const existingRow = await this.findRowByEventId(event.eventId);
+
     if (existingRow) {
       await this.updateRow(existingRow, event);
       return { action: 'updated', rowIndex: existingRow };
     }
     await this.appendRow(event);
     const newRow = await this.findRowByEventId(event.eventId);
+    return { action: 'created', rowIndex: newRow as number };
+  }
+}
+
+    await this.appendRow(event);
+    const newRow = await this.findRowByEventId(event.eventId);
+
     return { action: 'created', rowIndex: newRow as number };
   }
 }

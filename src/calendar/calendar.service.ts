@@ -10,6 +10,23 @@ const RESUME_LABEL_LINK_REGEX = /(?:resume|cv)\s*:?\s*(https?:\/\/\S+)/i;
 const DRIVE_LINK_REGEX = /(https?:\/\/(?:drive|docs)\.google\.com\/\S+)/i;
 const INTERVIEWER_LINE_REGEX = /interviewers?\s*:\s*(.+)/i;
 
+const TYPE_KEYWORDS = [
+  'online', 'onsite', 'on-site', 'in-person', 'in person',
+  'phone', 'telephonic', 'virtual', 'video', 'in-office',
+];
+
+const STAGE_KEYWORDS = [
+  '1st interview', '2nd interview', '3rd interview', 'final interview',
+  'screening', 'technical interview', 'technical round', 'hr interview',
+  'hr round', 'final round', 'interview', 'round',
+];
+
+const POSITION_KEYWORDS = [
+  'developer', 'engineer', 'designer', 'analyst', 'manager', 'lead',
+  'intern', 'architect', 'consultant', 'specialist', 'officer',
+  'executive', 'scientist', 'tester', 'qa',
+];
+
 @Injectable()
 export class CalendarService {
   private readonly logger = new Logger(CalendarService.name);
@@ -99,11 +116,64 @@ export class CalendarService {
     if (parts.length < 4) {
       this.logger.warn(
         `Skipping event ${event.id}: subject doesn't match "Candidate | Position | Stage | Type" -> "${summary}"`,
+  private classifyTitleParts(parts: string[]): {
+    candidateName: string;
+    position: string;
+    interviewStage: string;
+    type: string;
+  } {
+    let type = '';
+    let stage = '';
+    let position = '';
+    const remaining: string[] = [];
+
+    for (const part of parts) {
+      const lower = part.toLowerCase();
+
+      if (!type && TYPE_KEYWORDS.some((k) => lower.includes(k))) {
+        type = part;
+        continue;
+      }
+      if (!stage && STAGE_KEYWORDS.some((k) => lower.includes(k))) {
+        stage = part;
+        continue;
+      }
+      if (!position && POSITION_KEYWORDS.some((k) => lower.includes(k))) {
+        position = part;
+        continue;
+      }
+      remaining.push(part);
+    }
+
+    if (!position && remaining.length > 1) {
+      position = remaining.shift() as string;
+    }
+
+    const candidateName = remaining.shift() || '';
+
+    return { candidateName, position, interviewStage: stage, type };
+  }
+
+  private mapToDto(event: any): CalendarEventDto | null {
+    const summary: string = event.summary || '';
+    const parts = summary.split('|').map((p: string) => p.trim()).filter(Boolean);
+
+    if (parts.length < 2) {
+      this.logger.warn(
+        `Skipping event ${event.id}: title too short to parse -> "${summary}"`,
       );
       return null;
     }
 
     const [candidateName, position, interviewStage, type] = parts;
+    const { candidateName, position, interviewStage, type } = this.classifyTitleParts(parts);
+
+    if (!candidateName) {
+      this.logger.warn(
+        `Skipping event ${event.id}: could not identify candidate name -> "${summary}"`,
+      );
+      return null;
+    }
 
     const startDateTime: string = event.start?.dateTime || event.start?.date || '';
     const [date, timeWithOffset] = startDateTime.includes('T')
