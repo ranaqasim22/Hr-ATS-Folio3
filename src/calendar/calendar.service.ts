@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GoogleCalendarService } from '@qte/nest-google-calendar';
 import { GoogleAuthService } from '../google-auth/google-auth.service';
 import { CalendarEventDto } from './dto/calendar-event.dto';
 
@@ -10,6 +9,8 @@ const RESUME_LABEL_LINK_REGEX = /(?:resume|cv)\s*:?\s*(https?:\/\/\S+)/i;
 const DRIVE_LINK_REGEX = /(https?:\/\/(?:drive|docs)\.google\.com\/\S+)/i;
 const INTERVIEWER_LINE_REGEX = /interviewers?\s*:\s*(.+)/i;
 
+// Keyword sets used to recognize each title part by its CONTENT, not its
+// position — so title parts can be typed in any order.
 const TYPE_KEYWORDS = [
   'online', 'onsite', 'on-site', 'in-person', 'in person',
   'phone', 'telephonic', 'virtual', 'video', 'in-office',
@@ -34,14 +35,17 @@ export class CalendarService {
   private readonly HR_SCHEDULING_EMAIL: string;
 
   constructor(
-    private readonly googleCalendarService: GoogleCalendarService,
     private readonly googleAuthService: GoogleAuthService,
     private readonly configService: ConfigService,
-  ) {this.HR_SCHEDULING_EMAIL = this.configService.get<string>('HR_SCHEDULING_EMAIL');
-
-if (!this.HR_SCHEDULING_EMAIL) {
-  throw new Error('HR_SCHEDULING_EMAIL is not set in .env file');
-}}
+  ) {
+    const configuredEmail = this.configService.get<string>('HR_SCHEDULING_EMAIL');
+    if (!configuredEmail) {
+      throw new Error(
+        'HR_SCHEDULING_EMAIL is not set in .env — please set it before starting the app.',
+      );
+    }
+    this.HR_SCHEDULING_EMAIL = configuredEmail;
+  }
 
   async getInterviewEvents(
     timeMin: Date = new Date(),
@@ -49,20 +53,56 @@ if (!this.HR_SCHEDULING_EMAIL) {
   ): Promise<CalendarEventDto[]> {
     const access_token = await this.googleAuthService.getAccessToken();
 
-    const events = await this.googleCalendarService.getEvents({
-      timeMin,
-      timeMax,
-      access_token,
+    // Calling Google's REST API directly with fetch() — no heavy SDK
+    // (googleapis) needed, which avoids the TypeScript memory-crash issue
+    // and guarantees showDeleted actually reaches Google (unlike the
+    // @qte/nest-google-calendar wrapper, which silently dropped it).
+    const params = new URLSearchParams({
+      timeMin: timeMin.toISOString(),
+      timeMax: timeMax.toISOString(),
+      singleEvents: 'true',
+      showDeleted: 'true',
     });
 
-    const hrEvents = (events || []).filter((event) => this.hasHrScheduling(event));
+    const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params.toString()}`;
+
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${access_token}` },
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      this.logger.error(`Google Calendar API error ${res.status}: ${errText}`);
+      throw new Error(`Failed to fetch calendar events (status ${res.status})`);
+    }
+
+    const data: any = await res.json();
+    const events: any[] = data.items || [];
+
+    const hrEvents = events.filter((event) => this.isRelevantEvent(event));
 
     const parsed = hrEvents
       .map((event) => this.mapToDto(event))
       .filter((dto): dto is CalendarEventDto => dto !== null);
 
-    this.logger.log(`Fetched ${events?.length ?? 0} events, ${parsed.length} matched HR scheduling`);
+    this.logger.log(`Fetched ${events.length} events, ${parsed.length} matched HR scheduling`);
     return parsed;
+  }
+
+  /**
+   * Cancelled events sometimes lose their attendee list. If it's cancelled
+   * and we can no longer verify attendees, still let it through so we can
+   * report its status as "Cancelled" rather than silently dropping it.
+   */
+  private isRelevantEvent(event: any): boolean {
+    const attendees = event.attendees || [];
+
+    if (event.status === 'cancelled') {
+      if (attendees.length === 0) return true;
+      return this.hasHrScheduling(event);
+    }
+
+    return this.hasHrScheduling(event);
   }
 
   private hasHrScheduling(event: any): boolean {
@@ -108,6 +148,10 @@ if (!this.HR_SCHEDULING_EMAIL) {
     return chosen.fileUrl || '';
   }
 
+  /**
+   * Classifies each "|"-separated title part by its CONTENT (keywords),
+   * not its position — so title parts can be typed in any order.
+   */
   private classifyTitleParts(parts: string[]): {
     candidateName: string;
     position: string;
@@ -147,7 +191,30 @@ if (!this.HR_SCHEDULING_EMAIL) {
   }
 
   private mapToDto(event: any): CalendarEventDto | null {
+    const isCancelled = event.status === 'cancelled';
     const summary: string = event.summary || '';
+
+    // Google sometimes strips a cancelled event down to almost nothing —
+    // still report it as Cancelled instead of dropping it silently.
+    if (isCancelled && !summary) {
+      return {
+        candidateName: '(unknown — event deleted before details could be read)',
+        position: '',
+        interviewStage: '',
+        type: '',
+        date: '',
+        time: '',
+        location: '',
+        interviewers: [],
+        recruiter: '',
+        contactNumber: '',
+        emailAddress: '',
+        resumeLink: '',
+        eventId: event.id,
+        status: 'Cancelled',
+      };
+    }
+
     const parts = summary.split('|').map((p: string) => p.trim()).filter(Boolean);
 
     if (parts.length < 2) {
@@ -207,6 +274,7 @@ if (!this.HR_SCHEDULING_EMAIL) {
       emailAddress: emailMatches[0] || '',
       resumeLink,
       eventId: event.id,
+      status: isCancelled ? 'Cancelled' : 'Active',
     };
   }
 
