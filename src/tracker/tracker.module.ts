@@ -15,6 +15,6 @@ import { SheetsModule } from '../sheets/sheets.module';
     TrackerService,         // ✅ Add TrackerService
     ResumeParserService,    // ✅ Add ResumeParserService
   ],
-  exports: [TrackerService],
+  exports: [TrackerService, ResumeParserService],
 })
 export class TrackerModule {}

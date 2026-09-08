@@ -31,7 +31,7 @@
     "@qte/nest-google-calendar": "^1.0.0",
     "google-auth-library": "^11.0.2",
     "mammoth": "^1.12.2",
-    "pdf-parse": "^2.4.5",
+    "pdf-parse": "^1.1.1",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.1"
   },
