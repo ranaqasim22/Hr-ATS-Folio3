@@ -3,11 +3,29 @@ import { ConfigService } from '@nestjs/config';
 import { GoogleCalendarService } from '@qte/nest-google-calendar';
 import { GoogleAuthService } from '../google-auth/google-auth.service';
 import { CalendarEventDto } from './dto/calendar-event.dto';
+
 const PHONE_REGEX = /(\+?\d[\d\s\-()]{7,}\d)/;
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 const RESUME_LABEL_LINK_REGEX = /(?:resume|cv)\s*:?\s*(https?:\/\/\S+)/i;
 const DRIVE_LINK_REGEX = /(https?:\/\/(?:drive|docs)\.google\.com\/\S+)/i;
 const INTERVIEWER_LINE_REGEX = /interviewers?\s*:\s*(.+)/i;
+
+const TYPE_KEYWORDS = [
+  'online', 'onsite', 'on-site', 'in-person', 'in person',
+  'phone', 'telephonic', 'virtual', 'video', 'in-office',
+];
+
+const STAGE_KEYWORDS = [
+  '1st interview', '2nd interview', '3rd interview', 'final interview',
+  'screening', 'technical interview', 'technical round', 'hr interview',
+  'hr round', 'final round', 'interview', 'round',
+];
+
+const POSITION_KEYWORDS = [
+  'developer', 'engineer', 'designer', 'analyst', 'manager', 'lead',
+  'intern', 'architect', 'consultant', 'specialist', 'officer',
+  'executive', 'scientist', 'tester', 'qa',
+];
 
 @Injectable()
 export class CalendarService {
@@ -19,12 +37,12 @@ export class CalendarService {
     private readonly googleCalendarService: GoogleCalendarService,
     private readonly googleAuthService: GoogleAuthService,
     private readonly configService: ConfigService,
-  ) {
-    this.HR_SCHEDULING_EMAIL =
-      this.configService.get<string>('HR_SCHEDULING_EMAIL') || 'hr-scheduling@folio3.com';
-  }
+  ) {this.HR_SCHEDULING_EMAIL = this.configService.get<string>('HR_SCHEDULING_EMAIL');
 
- 
+if (!this.HR_SCHEDULING_EMAIL) {
+  throw new Error('HR_SCHEDULING_EMAIL is not set in .env file');
+}}
+
   async getInterviewEvents(
     timeMin: Date = new Date(),
     timeMax: Date = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // next 30 days
@@ -54,34 +72,99 @@ export class CalendarService {
     );
   }
 
-private cleanDescription(raw: string): string {
-  if (!raw) return '';
+  private cleanDescription(raw: string): string {
+    if (!raw) return '';
 
-  return raw
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<\/div>/gi, '\n')
-    .replace(/<a[^>]*href=["']([^"']+)["'][^>]*>.*?<\/a>/gis, '$1')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .trim();
-}
- 
+    return raw
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<a[^>]*href=["']([^"']+)["'][^>]*>.*?<\/a>/gis, '$1')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .trim();
+  }
+
+  private extractAttachmentResumeLink(event: any): string {
+    const attachments = event.attachments || [];
+    if (attachments.length === 0) return '';
+
+    const resumeLike = attachments.find((a: any) => {
+      const title = (a.title || '').toLowerCase();
+      const mime = (a.mimeType || '').toLowerCase();
+      return (
+        title.includes('resume') ||
+        title.includes('cv') ||
+        mime.includes('pdf') ||
+        mime.includes('word') ||
+        mime.includes('document')
+      );
+    });
+
+    const chosen = resumeLike || attachments[0]; // fallback: first attachment
+    return chosen.fileUrl || '';
+  }
+
+  private classifyTitleParts(parts: string[]): {
+    candidateName: string;
+    position: string;
+    interviewStage: string;
+    type: string;
+  } {
+    let type = '';
+    let stage = '';
+    let position = '';
+    const remaining: string[] = [];
+
+    for (const part of parts) {
+      const lower = part.toLowerCase();
+
+      if (!type && TYPE_KEYWORDS.some((k) => lower.includes(k))) {
+        type = part;
+        continue;
+      }
+      if (!stage && STAGE_KEYWORDS.some((k) => lower.includes(k))) {
+        stage = part;
+        continue;
+      }
+      if (!position && POSITION_KEYWORDS.some((k) => lower.includes(k))) {
+        position = part;
+        continue;
+      }
+      remaining.push(part);
+    }
+
+    if (!position && remaining.length > 1) {
+      position = remaining.shift() as string;
+    }
+
+    const candidateName = remaining.shift() || '';
+
+    return { candidateName, position, interviewStage: stage, type };
+  }
+
   private mapToDto(event: any): CalendarEventDto | null {
     const summary: string = event.summary || '';
-    const parts = summary.split('|').map((p: string) => p.trim());
+    const parts = summary.split('|').map((p: string) => p.trim()).filter(Boolean);
 
-    if (parts.length < 4) {
+    if (parts.length < 2) {
       this.logger.warn(
-        `Skipping event ${event.id}: subject doesn't match "Candidate | Position | Stage | Type" -> "${summary}"`,
+        `Skipping event ${event.id}: title too short to parse -> "${summary}"`,
       );
       return null;
     }
 
-    const [candidateName, position, interviewStage, type] = parts;
+    const { candidateName, position, interviewStage, type } = this.classifyTitleParts(parts);
+
+    if (!candidateName) {
+      this.logger.warn(
+        `Skipping event ${event.id}: could not identify candidate name -> "${summary}"`,
+      );
+      return null;
+    }
 
     const startDateTime: string = event.start?.dateTime || event.start?.date || '';
     const [date, timeWithOffset] = startDateTime.includes('T')
@@ -93,7 +176,6 @@ private cleanDescription(raw: string): string {
     const attendeeEmails: string[] = attendees.map((a: any) => a.email).filter(Boolean);
     const description: string = this.cleanDescription(event.description || '');
 
-  
     const interviewerLineMatch = description.match(INTERVIEWER_LINE_REGEX);
     const interviewers = interviewerLineMatch
       ? interviewerLineMatch[1].split(',').map((name) => name.trim()).filter(Boolean)
@@ -107,7 +189,9 @@ private cleanDescription(raw: string): string {
 
     const phoneMatch = description.match(PHONE_REGEX);
     const emailMatches = description.match(EMAIL_REGEX) || [];
-    const resumeLink = this.extractResumeLink(description);
+
+    const resumeLink =
+      this.extractAttachmentResumeLink(event) || this.extractResumeLink(description);
 
     return {
       candidateName,
