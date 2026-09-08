@@ -9,8 +9,6 @@ const RESUME_LABEL_LINK_REGEX = /(?:resume|cv)\s*:?\s*(https?:\/\/\S+)/i;
 const DRIVE_LINK_REGEX = /(https?:\/\/(?:drive|docs)\.google\.com\/\S+)/i;
 const INTERVIEWER_LINE_REGEX = /interviewers?\s*:\s*(.+)/i;
 
-// Keyword sets used to recognize each title part by its CONTENT, not its
-// position — so title parts can be typed in any order.
 const TYPE_KEYWORDS = [
   'online', 'onsite', 'on-site', 'in-person', 'in person',
   'phone', 'telephonic', 'virtual', 'video', 'in-office',
@@ -53,10 +51,6 @@ export class CalendarService {
   ): Promise<CalendarEventDto[]> {
     const access_token = await this.googleAuthService.getAccessToken();
 
-    // Calling Google's REST API directly with fetch() — no heavy SDK
-    // (googleapis) needed, which avoids the TypeScript memory-crash issue
-    // and guarantees showDeleted actually reaches Google (unlike the
-    // @qte/nest-google-calendar wrapper, which silently dropped it).
     const params = new URLSearchParams({
       timeMin: timeMin.toISOString(),
       timeMax: timeMax.toISOString(),
@@ -89,11 +83,6 @@ export class CalendarService {
     return parsed;
   }
 
-  /**
-   * Cancelled events sometimes lose their attendee list. If it's cancelled
-   * and we can no longer verify attendees, still let it through so we can
-   * report its status as "Cancelled" rather than silently dropping it.
-   */
   private isRelevantEvent(event: any): boolean {
     const attendees = event.attendees || [];
 
@@ -148,10 +137,6 @@ export class CalendarService {
     return chosen.fileUrl || '';
   }
 
-  /**
-   * Classifies each "|"-separated title part by its CONTENT (keywords),
-   * not its position — so title parts can be typed in any order.
-   */
   private classifyTitleParts(parts: string[]): {
     candidateName: string;
     position: string;
@@ -194,8 +179,6 @@ export class CalendarService {
     const isCancelled = event.status === 'cancelled';
     const summary: string = event.summary || '';
 
-    // Google sometimes strips a cancelled event down to almost nothing —
-    // still report it as Cancelled instead of dropping it silently.
     if (isCancelled && !summary) {
       return {
         candidateName: '(unknown — event deleted before details could be read)',
