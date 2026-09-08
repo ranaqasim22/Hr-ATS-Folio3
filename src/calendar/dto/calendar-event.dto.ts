@@ -1,15 +1,14 @@
-
 export class CalendarEventDto {
   candidateName: string;
   position: string;
   interviewStage: string;
   type: string;
 
-  date: string; // e.g. "2026-09-10"
-  time: string; // e.g. "14:30"
+  date: string;
+  time: string;
   location: string;
 
-  interviewers: string[]; // list of interviewer emails/names
+  interviewers: string[];
   recruiter: string;
 
   contactNumber: string;
@@ -17,4 +16,6 @@ export class CalendarEventDto {
 
   resumeLink: string;
   eventId: string;
+
+  status: 'Active' | 'Cancelled';
 }
