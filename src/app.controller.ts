@@ -73,7 +73,8 @@ export class AppController {
             parsed: parsedData
           });
         } catch (error) {
-          results.push({ eventId: event.eventId, error: error.message });
+          const message = error instanceof Error ? error.message : String(error);
+          results.push({ eventId: event.eventId, error: message });
         }
       }
       
@@ -83,7 +84,8 @@ export class AppController {
         results
       };
     } catch (error) {
-      return { message: 'Failed', error: error.message };
+      const message = error instanceof Error ? error.message : String(error);
+      return { message: 'Failed', error: message };
     }
   }
 }
