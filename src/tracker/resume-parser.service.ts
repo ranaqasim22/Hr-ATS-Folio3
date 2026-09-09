@@ -26,8 +26,9 @@ export class ResumeParserService {
     if (this.genAI) {
       try {
         return await this.extractWithGemini(cvText);
-      } catch (error) {
-        this.logger.warn(`Gemini failed: ${error.message}. Trying Groq...`);
+      }  catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`Gemini failed: ${message}. Trying Groq...`);
       }
     }
 
@@ -36,7 +37,8 @@ export class ResumeParserService {
       try {
         return await this.extractWithGroq(cvText);
       } catch (error) {
-        this.logger.error(`Groq also failed: ${error.message}`);
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.error(`Groq also failed: ${message}`);
       }
     }
 
