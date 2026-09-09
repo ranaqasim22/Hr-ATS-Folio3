@@ -58,7 +58,7 @@ export class SheetsService {
   }
 
   private getDataRange(): string {
-    return `${this.getSheetName()}!A:M`;
+    return `${this.getSheetName()}!A:N`;
   }
 
   private eventToRow(event: CalendarEventDto): any[] {
@@ -76,6 +76,7 @@ export class SheetsService {
       event.emailAddress ?? '',
       event.resumeLink ?? '',
       event.eventId,
+      event.status ?? 'Active',
     ];
   }
 
@@ -98,6 +99,42 @@ export class SheetsService {
     return `${day}/${month}/${year}`;
   }
 
+  private parseSheetDate(date: string): Date | null {
+  const match = date.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const [, day, month, year] = match;
+
+  return new Date(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+  );
+}
+
+private async getSheetId(): Promise<number> {
+  const spreadsheetId = this.getSpreadsheetId();
+  const sheetName = this.getSheetName();
+
+  const response = await this.sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: 'sheets.properties',
+  });
+
+  const sheet = response.data.sheets?.find(
+    (sheet: any) => sheet.properties?.title === sheetName,
+  );
+
+  if (!sheet?.properties) {
+    throw new Error(`Sheet "${sheetName}" not found`);
+  }
+
+  return sheet.properties.sheetId;
+}
+
   async findRowByEventId(eventId: string): Promise<number | null> {
     const response = await this.sheets.spreadsheets.values.get({
       spreadsheetId: this.getSpreadsheetId(),
@@ -111,18 +148,76 @@ export class SheetsService {
   }
 
   async appendRow(event: CalendarEventDto): Promise<void> {
-    const row = this.eventToRow(event);
-    await this.sheets.spreadsheets.values.append({
-      spreadsheetId: this.getSpreadsheetId(),
-      range: this.getDataRange(),
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [row] },
-    });
+  const spreadsheetId = this.getSpreadsheetId();
+  const sheetName = this.getSheetName();
+  const newRow = this.eventToRow(event);
+
+  const response = await this.sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!A:N`,
+  });
+
+  const rows = response.data.values || [];
+
+  // Default: last row
+  let insertAtRow = rows.length + 1;
+
+  const newEventDate = this.parseSheetDate(this.formatDate(event.date));
+
+  // Header skip: i = 1
+  for (let i = 1; i < rows.length; i++) {
+    const existingDate = rows[i]?.[4]; // Column E = Date
+
+    if (!existingDate) {
+      continue;
+    }
+
+    const existingEventDate = this.parseSheetDate(existingDate);
+
+    if (
+      newEventDate &&
+      existingEventDate &&
+      newEventDate.getTime() < existingEventDate.getTime()
+    ) {
+      // Google Sheets row numbers are 1-based
+      insertAtRow = i + 1;
+      break;
+    }
   }
 
+  // Insert a new empty row at the correct position
+  await this.sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          insertDimension: {
+            range: {
+              sheetId: await this.getSheetId(),
+              dimension: 'ROWS',
+              startIndex: insertAtRow - 1,
+              endIndex: insertAtRow,
+            },
+            inheritFromBefore: false,
+          },
+        },
+      ],
+    },
+  });
+
+  // Put event data into the newly inserted row
+  await this.sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${sheetName}!A${insertAtRow}:N${insertAtRow}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: {
+      values: [newRow],
+    },
+  });
+}
   async updateRow(rowIndex: number, event: CalendarEventDto): Promise<void> {
     const row = this.eventToRow(event);
-    const range = `${this.getSheetName()}!A${rowIndex}:M${rowIndex}`;
+    const range = `${this.getSheetName()}!A${rowIndex}:N${rowIndex}`;
     await this.sheets.spreadsheets.values.update({
       spreadsheetId: this.getSpreadsheetId(),
       range,

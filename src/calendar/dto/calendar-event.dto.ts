@@ -11,13 +11,11 @@ export class CalendarEventDto {
 
   interviewers: string[]; // list of interviewer emails/names
   recruiter: string;
-
- 
   contactNumber: string;
   
   emailAddress: string;
 
   resumeLink: string;
   eventId: string;
-   status: 'Active' | 'Cancelled';
+  status: 'Active' | 'Cancelled';
 }
