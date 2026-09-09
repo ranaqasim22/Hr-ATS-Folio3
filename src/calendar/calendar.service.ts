@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { GoogleCalendarService } from '@qte/nest-google-calendar';
 import { GoogleAuthService } from '../google-auth/google-auth.service';
 import { CalendarEventDto } from './dto/calendar-event.dto';
 
@@ -9,23 +10,6 @@ const RESUME_LABEL_LINK_REGEX = /(?:resume|cv)\s*:?\s*(https?:\/\/\S+)/i;
 const DRIVE_LINK_REGEX = /(https?:\/\/(?:drive|docs)\.google\.com\/\S+)/i;
 const INTERVIEWER_LINE_REGEX = /interviewers?\s*:\s*(.+)/i;
 
-const TYPE_KEYWORDS = [
-  'online', 'onsite', 'on-site', 'in-person', 'in person',
-  'phone', 'telephonic', 'virtual', 'video', 'in-office',
-];
-
-const STAGE_KEYWORDS = [
-  '1st interview', '2nd interview', '3rd interview', 'final interview',
-  'screening', 'technical interview', 'technical round', 'hr interview',
-  'hr round', 'final round', 'interview', 'round',
-];
-
-const POSITION_KEYWORDS = [
-  'developer', 'engineer', 'designer', 'analyst', 'manager', 'lead',
-  'intern', 'architect', 'consultant', 'specialist', 'officer',
-  'executive', 'scientist', 'tester', 'qa',
-];
-
 @Injectable()
 export class CalendarService {
   private readonly logger = new Logger(CalendarService.name);
@@ -33,16 +17,12 @@ export class CalendarService {
   private readonly HR_SCHEDULING_EMAIL: string;
 
   constructor(
+    private readonly googleCalendarService: GoogleCalendarService,
     private readonly googleAuthService: GoogleAuthService,
     private readonly configService: ConfigService,
   ) {
-    const configuredEmail = this.configService.get<string>('HR_SCHEDULING_EMAIL');
-    if (!configuredEmail) {
-      throw new Error(
-        'HR_SCHEDULING_EMAIL is not set in .env — please set it before starting the app.',
-      );
-    }
-    this.HR_SCHEDULING_EMAIL = configuredEmail;
+    this.HR_SCHEDULING_EMAIL =
+      this.configService.get<string>('HR_SCHEDULING_EMAIL') || 'hr-scheduling@folio3.com';
   }
 
   async getInterviewEvents(
@@ -51,47 +31,21 @@ export class CalendarService {
   ): Promise<CalendarEventDto[]> {
     const access_token = await this.googleAuthService.getAccessToken();
 
-    const params = new URLSearchParams({
-      timeMin: timeMin.toISOString(),
-      timeMax: timeMax.toISOString(),
-      singleEvents: 'true',
-      showDeleted: 'true',
+    const events = await this.googleCalendarService.getEvents({
+      timeMin,
+      timeMax,
+      access_token,
     });
 
-    const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params.toString()}`;
 
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${access_token}` },
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      this.logger.error(`Google Calendar API error ${res.status}: ${errText}`);
-      throw new Error(`Failed to fetch calendar events (status ${res.status})`);
-    }
-
-    const data: any = await res.json();
-    const events: any[] = data.items || [];
-
-    const hrEvents = events.filter((event) => this.isRelevantEvent(event));
+    const hrEvents = (events || []).filter((event) => this.hasHrScheduling(event));
 
     const parsed = hrEvents
       .map((event) => this.mapToDto(event))
       .filter((dto): dto is CalendarEventDto => dto !== null);
 
-    this.logger.log(`Fetched ${events.length} events, ${parsed.length} matched HR scheduling`);
+    this.logger.log(`Fetched ${events?.length ?? 0} events, ${parsed.length} matched HR scheduling`);
     return parsed;
-  }
-
-  private isRelevantEvent(event: any): boolean {
-    const attendees = event.attendees || [];
-
-    if (event.status === 'cancelled') {
-      if (attendees.length === 0) return true;
-      return this.hasHrScheduling(event);
-    }
-
-    return this.hasHrScheduling(event);
   }
 
   private hasHrScheduling(event: any): boolean {
@@ -117,6 +71,7 @@ export class CalendarService {
       .trim();
   }
 
+  
   private extractAttachmentResumeLink(event: any): string {
     const attachments = event.attachments || [];
     if (attachments.length === 0) return '';
@@ -137,84 +92,18 @@ export class CalendarService {
     return chosen.fileUrl || '';
   }
 
-  private classifyTitleParts(parts: string[]): {
-    candidateName: string;
-    position: string;
-    interviewStage: string;
-    type: string;
-  } {
-    let type = '';
-    let stage = '';
-    let position = '';
-    const remaining: string[] = [];
-
-    for (const part of parts) {
-      const lower = part.toLowerCase();
-
-      if (!type && TYPE_KEYWORDS.some((k) => lower.includes(k))) {
-        type = part;
-        continue;
-      }
-      if (!stage && STAGE_KEYWORDS.some((k) => lower.includes(k))) {
-        stage = part;
-        continue;
-      }
-      if (!position && POSITION_KEYWORDS.some((k) => lower.includes(k))) {
-        position = part;
-        continue;
-      }
-      remaining.push(part);
-    }
-
-    if (!position && remaining.length > 1) {
-      position = remaining.shift() as string;
-    }
-
-    const candidateName = remaining.shift() || '';
-
-    return { candidateName, position, interviewStage: stage, type };
-  }
-
   private mapToDto(event: any): CalendarEventDto | null {
-    const isCancelled = event.status === 'cancelled';
     const summary: string = event.summary || '';
+    const parts = summary.split('|').map((p: string) => p.trim());
 
-    if (isCancelled && !summary) {
-      return {
-        candidateName: '(unknown — event deleted before details could be read)',
-        position: '',
-        interviewStage: '',
-        type: '',
-        date: '',
-        time: '',
-        location: '',
-        interviewers: [],
-        recruiter: '',
-        contactNumber: '',
-        emailAddress: '',
-        resumeLink: '',
-        eventId: event.id,
-        status: 'Cancelled',
-      };
-    }
-
-    const parts = summary.split('|').map((p: string) => p.trim()).filter(Boolean);
-
-    if (parts.length < 2) {
+    if (parts.length < 4) {
       this.logger.warn(
-        `Skipping event ${event.id}: title too short to parse -> "${summary}"`,
+        `Skipping event ${event.id}: subject doesn't match "Candidate | Position | Stage | Type" -> "${summary}"`,
       );
       return null;
     }
 
-    const { candidateName, position, interviewStage, type } = this.classifyTitleParts(parts);
-
-    if (!candidateName) {
-      this.logger.warn(
-        `Skipping event ${event.id}: could not identify candidate name -> "${summary}"`,
-      );
-      return null;
-    }
+    const [candidateName, position, interviewStage, type] = parts;
 
     const startDateTime: string = event.start?.dateTime || event.start?.date || '';
     const [date, timeWithOffset] = startDateTime.includes('T')
@@ -257,7 +146,6 @@ export class CalendarService {
       emailAddress: emailMatches[0] || '',
       resumeLink,
       eventId: event.id,
-      status: isCancelled ? 'Cancelled' : 'Active',
     };
   }
 

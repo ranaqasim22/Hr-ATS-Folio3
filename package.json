@@ -20,16 +20,19 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@icetee/nest-google-sheet-connector": "^2.0.0",
     "@miinded/nestjs-google-drive": "^1.0.1",
     "@nestjs/common": "^10.0.0",
     "@nestjs/config": "^12.0.0",
     "@nestjs/core": "^10.0.0",
     "@nestjs/platform-express": "^10.0.0",
+    "@nestjs/schedule": "^12.0.1",
     "@qte/nest-google-calendar": "^1.0.0",
+    "axios": "^1.20.0",
     "google-auth-library": "^11.0.2",
     "mammoth": "^1.12.2",
-    "pdf-parse": "^2.4.5",
+    "pdf-parse": "^1.1.1",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.1"
   },
