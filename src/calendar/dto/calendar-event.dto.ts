@@ -1,9 +1,4 @@
-/**
- * CalendarEventDto
- * -----------------
- * Data contract produced by CalendarService.
- * Other members (Sheets, Drive/Resume, AI testing) consume this shape.
- */
+
 export class CalendarEventDto {
   candidateName: string;
   position: string;
@@ -17,9 +12,12 @@ export class CalendarEventDto {
   interviewers: string[]; // list of interviewer emails/names
   recruiter: string;
 
+ 
   contactNumber: string;
+  
   emailAddress: string;
 
   resumeLink: string;
   eventId: string;
+   status: 'Active' | 'Cancelled';
 }
