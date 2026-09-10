@@ -1,5 +1,4 @@
 service-account.json
-.env
 # Dependencies
 node_modules/
 
@@ -7,8 +6,6 @@ node_modules/
 dist/
 
 # Environment variables / secrets
-.env
-.env.local
 .env.*.local
 
 # Logs
@@ -35,3 +32,4 @@ coverage/
 
 # TypeScript
 *.tsbuildinfo
+config.bat

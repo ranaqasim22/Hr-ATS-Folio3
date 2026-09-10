@@ -1,99 +1,157 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Folio3 ATS — Interview Tracking Automation
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+An automated Applicant Tracking System (ATS) backend that monitors Google Calendar for interview events, uses AI to classify and extract structured interview data, downloads and parses candidate resumes, and syncs everything into a Google Sheet — eliminating manual tracking of the interview pipeline.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://coveralls.io/github/nestjs/nest?branch=master" target="_blank"><img src="https://coveralls.io/repos/github/nestjs/nest/badge.svg?branch=master#9" alt="Coverage" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## What It Does
 
-## Description
+This service watches a Google Calendar for interview-related events and, without any manual data entry, produces a fully structured, up-to-date interview tracker in Google Sheets. The pipeline runs end-to-end automatically:
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+**Calendar → AI Classification → Resume Download → AI Resume Parsing → Google Sheets Sync**
 
-## Project setup
+Built for HR and recruitment teams who schedule interviews via Google Calendar and need a single source of truth for candidate status, without maintaining it by hand.
 
-```bash
-$ npm install
+## How It Works
+
+1. **Calendar Monitoring** — Polls the primary Google Calendar for recent events within a configurable time window.
+2. **AI Event Classification** — Sends batches of events to Groq's LLM (`openai/gpt-oss-120b`) to semantically determine whether each event is an interview, and extracts details like position, interview stage, type (online/onsite/phone), interviewers, and recruiter.
+3. **Resume Retrieval** — Downloads attached resumes from Google Drive (supports Google Docs, PDF, DOCX, and DOC formats).
+4. **AI Resume Parsing** — Extracts candidate name, email, and phone number from resume text using Groq.
+5. **Sheet Sync** — Upserts the combined data into a Google Sheet, keyed by calendar event ID, keeping rows sorted chronologically by interview date.
+
+This entire flow runs automatically on a schedule (see [Tracker Service](#key-modules)), and can also be triggered manually via a test endpoint.
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Runtime | Node.js (v20+) |
+| Language | TypeScript |
+| Framework | NestJS (Express under the hood) |
+| AI / LLM | Groq API — `openai/gpt-oss-120b`, `llama-3.3-70b-versatile` |
+| Google APIs | Calendar API v3, Drive API v3, Sheets API v4 |
+| Document Parsing | `pdf-parse`, `mammoth` (DOCX), `word-extractor` (DOC) |
+| Scheduling | `@nestjs/schedule` |
+| Config | `@nestjs/config` (`.env`) |
+| Testing | Jest, Supertest |
+| Data Store | Google Sheets (no traditional database) |
+
+## Project Structure
+
+```
+src/
+├── main.ts                    # App bootstrap, CORS, port 3000
+├── app.module.ts              # Root module
+├── app.controller.ts          # Root routes incl. manual pipeline trigger
+│
+├── google-auth/               # Shared Google OAuth2 client (global module)
+├── calendar/                  # Calendar fetching + AI event classification
+├── drive/                     # Resume download/upload, text extraction
+├── sheets/                    # Google Sheets read/write, upsert logic
+├── tracker/                   # Orchestrates the full sync pipeline
+│   └── resume-parser.service.ts  # AI resume field extraction
+│
+└── interview-parser/          # ⚠️ Orphaned module, not currently wired in
 ```
 
-## Compile and run the project
+## Key Modules
+
+- **`calendar.service.ts`** — Core AI classification logic (~674 lines). Handles Groq API key rotation, rate-limit retries with backoff, and structured field extraction from event descriptions.
+- **`tracker.service.ts`** — Runs the full sync pipeline on startup and on an interval. Includes a lock to prevent overlapping runs and cleans up temp files after each pass.
+- **`sheets.service.ts`** — Manages the 15-column tracker sheet (Candidate Name, Position, Stage, Type, Date, Time, Location, Interviewers, Recruiter, Contact, Email, Resume Link, Event ID, Status, Updated At).
+- **`drive.service.ts`** — Handles multiple Drive URL formats and file types, with basic integrity checks on downloaded files.
+
+## Setup & Installation
+
+### Prerequisites
+
+- Node.js v20+
+- Google Cloud project with **Calendar API**, **Drive API**, and **Sheets API** enabled
+- OAuth2 credentials (or a Service Account) for Google APIs
+- A Groq API account with at least one API key
+
+### Install
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm install
 ```
 
-## Run tests
+> Note: `.npmrc` sets `legacy-peer-deps=true`.
+
+### Environment Variables
+
+Create a `.env` file with the following (the committed `.env.example` is incomplete — this is the full list currently required by the code):
+
+```
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REFRESH_TOKEN=
+GOOGLE_SHEET_ID=
+GOOGLE_SHEET_NAME=
+GOOGLE_SHEETS_SERVICE_ACCOUNT_KEY_PATH=
+GOOGLE_DRIVE_FOLDER_ID=
+HR_SCHEDULING_EMAIL=
+GROQ_API_KEY=
+GROQ_API_KEY_2=
+RECENT_WINDOW_MINUTES=15
+```
+
+## Running the App
 
 ```bash
-# unit tests
-$ npm run test
+# Development (watch mode)
+npm run start:dev
 
-# e2e tests
-$ npm run test:e2e
+# Development (one-shot)
+npm run start
 
-# test coverage
-$ npm run test:cov
+# Debug mode
+npm run start:debug
+
+# Production build
+npm run build
+npm run start:prod
 ```
 
-## Deployment
+Server runs on **port 3000** by default.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### Testing & Linting
 
 ```bash
-$ npm install -g mau
-$ mau deploy
+npm run test        # unit tests
+npm run test:e2e    # e2e tests
+npm run test:cov    # coverage
+npm run lint
+npm run format
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+## API Endpoints
 
-## Resources
+| Method | Route | Description |
+|---|---|---|
+| `GET` | `/` | Health check |
+| `GET` | `/test-full-flow` | Manually triggers the full sync pipeline (debugging) |
+| `GET` | `/calendar/events?from=&to=` | Returns calendar events as JSON, or an HTML live dashboard (`Accept: text/html`) |
+| `POST` | `/sheets/sync` | Manually triggers a sheet sync |
 
-Check out a few resources that may come in handy when working with NestJS:
+Most functionality runs automatically via the scheduled `TrackerService` rather than through these endpoints — the endpoints are primarily for manual testing and monitoring.
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+## Data Store
 
-## Support
+There is currently **no traditional database**. The Google Sheet itself acts as the system of record, with row-level upsert logic keyed by calendar event ID. There are no migrations or seeders since the schema is just the sheet's header row.
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+## Known Limitations & Cleanup Opportunities
 
-## Stay in touch
+These are worth addressing as the project matures:
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+- **No authentication/authorization** — all endpoints are currently publicly accessible.
+- **`.env.example` is incomplete** — only lists a fraction of the required variables; the app will fail to start without the full set above.
+- **Dead code**: the `@google/generative-ai` package and `interview-parser/` module are unused leftovers from an earlier Gemini-based implementation and are not wired into the app.
+- **Several installed npm packages are unused**: `@icetee/nest-google-sheet-connector`, `@miinded/nestjs-google-drive`, `@qte/nest-google-calendar`.
+- **`word-extractor`** is used at runtime in `drive.service.ts` but isn't listed in `package.json` — `.doc` file parsing will fail unless it's installed separately.
+- **TypeScript strictness is relaxed** (`strictNullChecks: false`, `noImplicitAny: false`), and DTOs lack request validation (`class-validator`).
+- **Minimal test coverage** — only the default NestJS boilerplate e2e test currently exists.
+- **No Docker or CI/CD configuration** at present.
 
 ## License
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+_Add license information here._
