@@ -25,7 +25,6 @@ export class SheetsService {
     const refreshToken = this.configService.get<string>('GOOGLE_REFRESH_TOKEN');
 
     if (serviceAccountKeyPath) {
-      // 1. Use Service Account (if available)
       const auth = new google.auth.GoogleAuth({
         keyFile: serviceAccountKeyPath,
         scopes: ['https://www.googleapis.com/auth/spreadsheets'],
@@ -33,7 +32,6 @@ export class SheetsService {
       this.sheets = google.sheets({ version: 'v4', auth });
       this.logger.log('Sheets: Using Service Account authentication');
     } else if (clientId && clientSecret && refreshToken) {
-      // 2. Use OAuth2 (if available)
       const auth = new google.auth.OAuth2(clientId, clientSecret);
       auth.setCredentials({ refresh_token: refreshToken });
       this.sheets = google.sheets({ version: 'v4', auth });
@@ -100,41 +98,36 @@ export class SheetsService {
   }
 
   private parseSheetDate(date: string): Date | null {
-  const match = date.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  
+    const match = date.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
 
-  if (!match) {
-    return null;
+    if (!match) {
+      return null;
+    }
+
+    const [, day, month, year] = match;
+
+    return new Date(Number(year), Number(month) - 1, Number(day));
   }
 
-  const [, day, month, year] = match;
+  private async getSheetId(): Promise<number> {
+    const spreadsheetId = this.getSpreadsheetId();
+    const sheetName = this.getSheetName();
 
-  return new Date(
-    Number(year),
-    Number(month) - 1,
-    Number(day),
-  );
-}
+    const response = await this.sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets.properties',
+    });
 
-private async getSheetId(): Promise<number> {
-  const spreadsheetId = this.getSpreadsheetId();
-  const sheetName = this.getSheetName();
+    const sheet = response.data.sheets?.find(
+      (sheet: any) => sheet.properties?.title === sheetName,
+    );
 
-  const response = await this.sheets.spreadsheets.get({
-    spreadsheetId,
-    fields: 'sheets.properties',
-  });
+    if (!sheet?.properties) {
+      throw new Error(`Sheet "${sheetName}" not found`);
+    }
 
-  const sheet = response.data.sheets?.find(
-    (sheet: any) => sheet.properties?.title === sheetName,
-  );
-
-  if (!sheet?.properties) {
-    throw new Error(`Sheet "${sheetName}" not found`);
+    return sheet.properties.sheetId;
   }
-
-  return sheet.properties.sheetId;
-}
 
   async findRowByEventId(eventId: string): Promise<number | null> {
     const response = await this.sheets.spreadsheets.values.get({
@@ -149,73 +142,101 @@ private async getSheetId(): Promise<number> {
   }
 
   async appendRow(event: CalendarEventDto): Promise<void> {
-  const spreadsheetId = this.getSpreadsheetId();
-  const sheetName = this.getSheetName();
-  const newRow = this.eventToRow(event);
+    const spreadsheetId = this.getSpreadsheetId();
+    const sheetName = this.getSheetName();
+    const newRow = this.eventToRow(event);
 
-  const response = await this.sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${sheetName}!A:N`,
-  });
+    const response = await this.sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:N`,
+    });
 
-  const rows = response.data.values || [];
+    const rows = response.data.values || [];
 
-  // Default: last row
-  let insertAtRow = rows.length + 1;
+    let insertAtRow = rows.length + 1;
 
-  const newEventDate = this.parseSheetDate(this.formatDate(event.date));
+    const newEventDate = this.parseSheetDate(this.formatDate(event.date));
 
-  // Header skip: i = 1
-  for (let i = 1; i < rows.length; i++) {
-    const existingDate = rows[i]?.[4]; // Column E = Date
+    for (let i = 1; i < rows.length; i++) {
+      const existingDate = rows[i]?.[4];
 
-    if (!existingDate) {
-      continue;
+      if (!existingDate) {
+        continue;
+      }
+
+      const existingEventDate = this.parseSheetDate(existingDate);
+
+      if (
+        newEventDate &&
+        existingEventDate &&
+        newEventDate.getTime() < existingEventDate.getTime()
+      ) {
+        insertAtRow = i + 1;
+        break;
+      }
     }
 
-    const existingEventDate = this.parseSheetDate(existingDate);
+    await this.sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [
+          {
+            insertDimension: {
+              range: {
+                sheetId: await this.getSheetId(),
+                dimension: 'ROWS',
+                startIndex: insertAtRow - 1,
+                endIndex: insertAtRow,
+              },
+              inheritFromBefore: false,
+            },
+          },
+        ],
+      },
+    });
 
-    if (
-      newEventDate &&
-      existingEventDate &&
-      newEventDate.getTime() < existingEventDate.getTime()
-    ) {
-      // Google Sheets row numbers are 1-based
-      insertAtRow = i + 1;
-      break;
-    }
+    await this.sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!A${insertAtRow}:N${insertAtRow}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [newRow],
+      },
+    });
   }
 
-  // Insert a new empty row at the correct position
-  await this.sheets.spreadsheets.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      requests: [
-        {
-          insertDimension: {
-            range: {
-              sheetId: await this.getSheetId(),
-              dimension: 'ROWS',
-              startIndex: insertAtRow - 1,
-              endIndex: insertAtRow,
-            },
-            inheritFromBefore: false,
-          },
-        },
-      ],
-    },
-  });
+  /**
+   * Removes a row entirely (used when replacing an updated event's old
+   * row — see syncEvent below). Physically deletes the row, shifting
+   * everything below it up by one.
+   */
+  async deleteRow(rowIndex: number): Promise<void> {
+    const spreadsheetId = this.getSpreadsheetId();
+    const sheetId = await this.getSheetId();
 
-  // Put event data into the newly inserted row
-  await this.sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `${sheetName}!A${insertAtRow}:N${insertAtRow}`,
-    valueInputOption: 'USER_ENTERED',
-    requestBody: {
-      values: [newRow],
-    },
-  });
-}
+    await this.sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [
+          {
+            deleteDimension: {
+              range: {
+                sheetId,
+                dimension: 'ROWS',
+                startIndex: rowIndex - 1,
+                endIndex: rowIndex,
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    this.logger.log(`Deleted row ${rowIndex} (will be re-inserted with fresh data)`);
+  }
+
+  // Kept available for direct in-place updates if ever needed elsewhere,
+  // but syncEvent() no longer calls this — see the delete+reinsert flow below.
   async updateRow(rowIndex: number, event: CalendarEventDto): Promise<void> {
     const row = this.eventToRow(event);
     const range = `${this.getSheetName()}!A${rowIndex}:N${rowIndex}`;
@@ -227,15 +248,30 @@ private async getSheetId(): Promise<number> {
     });
   }
 
+  /**
+   * New event -> append (inserted in date-sorted order).
+   * Existing event (matched by eventId) -> delete the old row entirely,
+   * then re-insert fresh data via appendRow (which re-applies the same
+   * date-sorted positioning) — so an updated event lands in its correct
+   * chronological position rather than staying wherever it used to be.
+   *
+   * No timestamp comparison, no re-fetching Calendar, no new cron — this
+   * only reacts to whatever event TrackerService hands it.
+   */
   async syncEvent(event: CalendarEventDto): Promise<SyncResult> {
     if (!event.eventId) {
       throw new Error('eventId is required to sync an event to the sheet');
     }
+
     const existingRow = await this.findRowByEventId(event.eventId);
+
     if (existingRow) {
-      await this.updateRow(existingRow, event);
-      return { action: 'updated', rowIndex: existingRow };
+      await this.deleteRow(existingRow);
+      await this.appendRow(event);
+      const newRow = await this.findRowByEventId(event.eventId);
+      return { action: 'updated', rowIndex: newRow as number };
     }
+
     await this.appendRow(event);
     const newRow = await this.findRowByEventId(event.eventId);
     return { action: 'created', rowIndex: newRow as number };
