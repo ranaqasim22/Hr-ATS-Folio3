@@ -24,7 +24,7 @@ export class TrackerService implements OnModuleInit, OnModuleDestroy {
       this.logger.error(`Startup sync failed: ${err.message}`),
     );
 
-    const intervalMinutes = Number(process.env.SYNC_INTERVAL_MINUTES ?? 0);
+    const intervalMinutes = Number(process.env.RECENT_WINDOW_MINUTES ?? 0);
     if (intervalMinutes > 0) {
       this.syncTimer = setInterval(() => {
         this.sync().catch((err) =>

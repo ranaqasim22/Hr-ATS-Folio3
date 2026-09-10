@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { CalendarEventDto } from '../calendar/dto/calendar-event.dto';
 
 const EVENT_ID_COLUMN_INDEX = 12;
+const UPDATED_AT_COLUMN_INDEX = 14;
 
 export interface SyncResult {
   action: 'created' | 'updated';
@@ -16,7 +17,6 @@ export class SheetsService {
   private sheets: any;
 
   constructor(private readonly configService: ConfigService) {
-    // --- Smart Auth Logic: OAuth2 OR Service Account ---
     const serviceAccountKeyPath = this.configService.get<string>(
       'GOOGLE_SHEETS_SERVICE_ACCOUNT_KEY_PATH',
     );
@@ -55,8 +55,9 @@ export class SheetsService {
     return this.configService.get<string>('GOOGLE_SHEET_NAME') || 'Sheet1';
   }
 
+  // Widened from A:N to A:O — column O now stores "Updated At"
   private getDataRange(): string {
-    return `${this.getSheetName()}!A:N`;
+    return `${this.getSheetName()}!A:O`;
   }
 
   private eventToRow(event: CalendarEventDto): any[] {
@@ -75,6 +76,7 @@ export class SheetsService {
       event.resumeLink ?? '',
       event.eventId,
       event.status ?? 'Active',
+      event.updatedAt ?? '', // new: column O — raw ISO timestamp, used by getStoredUpdatedAtMap()
     ];
   }
 
@@ -141,6 +143,33 @@ export class SheetsService {
     return index === -1 ? null : index + 1;
   }
 
+  /**
+   * Reports back what updatedAt value is currently stored per eventId —
+   * a plain read, no comparison logic here. Whoever calls this (Member 4's
+   * TrackerService, then Member 1's CalendarService) decides what to do
+   * with it; this method's only job is to say what the Sheet already knows.
+   */
+  async getStoredUpdatedAtMap(): Promise<Record<string, string>> {
+    const response = await this.sheets.spreadsheets.values.get({
+      spreadsheetId: this.getSpreadsheetId(),
+      range: this.getDataRange(),
+    });
+
+    const rows = response.data.values || [];
+    const map: Record<string, string> = {};
+
+    for (let i = 1; i < rows.length; i++) {
+      const eventId = rows[i]?.[EVENT_ID_COLUMN_INDEX];
+      const updatedAt = rows[i]?.[UPDATED_AT_COLUMN_INDEX];
+
+      if (eventId) {
+        map[eventId] = updatedAt || '';
+      }
+    }
+
+    return map;
+  }
+
   async appendRow(event: CalendarEventDto): Promise<void> {
     const spreadsheetId = this.getSpreadsheetId();
     const sheetName = this.getSheetName();
@@ -148,7 +177,7 @@ export class SheetsService {
 
     const response = await this.sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!A:N`,
+      range: `${sheetName}!A:O`,
     });
 
     const rows = response.data.values || [];
@@ -197,7 +226,7 @@ export class SheetsService {
 
     await this.sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `${sheetName}!A${insertAtRow}:N${insertAtRow}`,
+      range: `${sheetName}!A${insertAtRow}:O${insertAtRow}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [newRow],
@@ -205,11 +234,6 @@ export class SheetsService {
     });
   }
 
-  /**
-   * Removes a row entirely (used when replacing an updated event's old
-   * row — see syncEvent below). Physically deletes the row, shifting
-   * everything below it up by one.
-   */
   async deleteRow(rowIndex: number): Promise<void> {
     const spreadsheetId = this.getSpreadsheetId();
     const sheetId = await this.getSheetId();
@@ -235,11 +259,9 @@ export class SheetsService {
     this.logger.log(`Deleted row ${rowIndex} (will be re-inserted with fresh data)`);
   }
 
-  // Kept available for direct in-place updates if ever needed elsewhere,
-  // but syncEvent() no longer calls this — see the delete+reinsert flow below.
   async updateRow(rowIndex: number, event: CalendarEventDto): Promise<void> {
     const row = this.eventToRow(event);
-    const range = `${this.getSheetName()}!A${rowIndex}:N${rowIndex}`;
+    const range = `${this.getSheetName()}!A${rowIndex}:O${rowIndex}`;
     await this.sheets.spreadsheets.values.update({
       spreadsheetId: this.getSpreadsheetId(),
       range,
@@ -248,16 +270,6 @@ export class SheetsService {
     });
   }
 
-  /**
-   * New event -> append (inserted in date-sorted order).
-   * Existing event (matched by eventId) -> delete the old row entirely,
-   * then re-insert fresh data via appendRow (which re-applies the same
-   * date-sorted positioning) — so an updated event lands in its correct
-   * chronological position rather than staying wherever it used to be.
-   *
-   * No timestamp comparison, no re-fetching Calendar, no new cron — this
-   * only reacts to whatever event TrackerService hands it.
-   */
   async syncEvent(event: CalendarEventDto): Promise<SyncResult> {
     if (!event.eventId) {
       throw new Error('eventId is required to sync an event to the sheet');

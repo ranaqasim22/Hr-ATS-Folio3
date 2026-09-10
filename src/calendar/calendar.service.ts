@@ -79,6 +79,7 @@ export class CalendarService {
   async getInterviewEvents(
     timeMin: Date = new Date(),
     timeMax: Date = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+     knownUpdatedAt?: Record<string, string>,
   ): Promise<CalendarEventDto[]> {
     const access_token = await this.googleAuthService.getAccessToken();
 
