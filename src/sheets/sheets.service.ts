@@ -101,6 +101,7 @@ export class SheetsService {
 
   private parseSheetDate(date: string): Date | null {
   const match = date.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  
 
   if (!match) {
     return null;
