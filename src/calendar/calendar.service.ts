@@ -116,8 +116,8 @@ export class CalendarService {
     const recentHrEvents = hrEvents.filter((event) => this.isEventRecent(event));
 
     this.logger.log(
-      `${recentHrEvents.length} of ${hrEvents.length} HR events are within the last 15 minutes — only these go to Groq`,
-    );
+  `${recentHrEvents.length} of ${hrEvents.length} HR events are within the last ${this.RECENT_WINDOW_MS / 60000} minutes — only these go to Groq`,
+);
 
     const cancelledEvents = recentHrEvents.filter(
       (event) => event.status === 'cancelled' && !event.summary,
@@ -167,8 +167,8 @@ export class CalendarService {
     });
 
     this.logger.log(
-      `Fetched ${events.length} events, ${hrEvents.length} HR events, ${parsed.length} interview events shown (last 15 min window)`,
-    );
+  `Fetched ${events.length} events, ${hrEvents.length} HR events, ${parsed.length} interview events shown (last ${this.RECENT_WINDOW_MS / 60000} min window)`,
+);
 
     // No extra filtering needed here — we already restricted to the
     // recent window before doing any Groq work above.
