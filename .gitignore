@@ -1,5 +1,4 @@
 service-account.json
-.env
 # Dependencies
 node_modules/
 
@@ -7,8 +6,6 @@ node_modules/
 dist/
 
 # Environment variables / secrets
-.env
-.env.local
 .env.*.local
 
 # Logs
@@ -23,7 +20,6 @@ pnpm-debug.log*
 Thumbs.db
 
 # IDE
-.vscode/
 .idea/
 
 # Testing / coverage
@@ -35,3 +31,4 @@ coverage/
 
 # TypeScript
 *.tsbuildinfo
+config.bat
