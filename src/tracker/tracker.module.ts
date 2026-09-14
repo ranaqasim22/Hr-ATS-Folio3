@@ -12,8 +12,8 @@ import { SheetsModule } from '../sheets/sheets.module';
     SheetsModule,    // ✅ For SheetsService
   ],
   providers: [
-    TrackerService,         // ✅ Add TrackerService
-    ResumeParserService,    // ✅ Add ResumeParserService
+    TrackerService,         // ✅ TrackerService
+    ResumeParserService,    // ✅ ResumeParserService
   ],
   exports: [TrackerService, ResumeParserService],
 })
