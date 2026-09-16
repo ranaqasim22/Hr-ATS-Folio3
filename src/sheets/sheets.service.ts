@@ -4,10 +4,6 @@ import { ConfigService } from '@nestjs/config';
 import { CalendarEventDto } from '../calendar/dto/calendar-event.dto';
 
 const EVENT_ID_COLUMN_INDEX = 12;
-<<<<<<< HEAD
-const UPDATED_AT_COLUMN_INDEX = 14;
-=======
->>>>>>> updated-sheet
 
 export interface SyncResult {
   action: 'created' | 'updated';
@@ -58,17 +54,11 @@ export class SheetsService {
     return this.configService.get<string>('GOOGLE_SHEET_NAME') || 'Sheet1';
   }
 
-<<<<<<< HEAD
-  // Widened from A:N to A:O — column O now stores "Updated At"
-  private getDataRange(): string {
-    return `${this.getSheetName()}!A:O`;
-=======
   // A:N — 14 columns. "Updated At" is intentionally NOT written to the
   // sheet (see eventToRow below); it stays only on the in-memory
   // CalendarEventDto (event.updatedAt) for internal tracking/sync use.
   private getDataRange(): string {
     return `${this.getSheetName()}!A:N`;
->>>>>>> updated-sheet
   }
 
   private eventToRow(event: CalendarEventDto): any[] {
@@ -87,14 +77,10 @@ export class SheetsService {
       event.resumeLink ?? '',
       event.eventId,
       event.status ?? 'Active',
-<<<<<<< HEAD
-      event.updatedAt ?? '', // new: column O — raw ISO timestamp, used by getStoredUpdatedAtMap()
-=======
       // NOTE: event.updatedAt is deliberately NOT included here — it must
       // not be written/displayed in the Google Sheet. It still exists on
       // the event object itself (CalendarEventDto.updatedAt) for anything
       // that needs it internally before this row is built.
->>>>>>> updated-sheet
     ];
   }
 
@@ -162,32 +148,6 @@ export class SheetsService {
   }
 
   /**
-<<<<<<< HEAD
-   * Reports back what updatedAt value is currently stored per eventId —
-   * a plain read, no comparison logic here. Whoever calls this (Member 4's
-   * TrackerService, then Member 1's CalendarService) decides what to do
-   * with it; this method's only job is to say what the Sheet already knows.
-   */
-  async getStoredUpdatedAtMap(): Promise<Record<string, string>> {
-    const response = await this.sheets.spreadsheets.values.get({
-      spreadsheetId: this.getSpreadsheetId(),
-      range: this.getDataRange(),
-    });
-
-    const rows = response.data.values || [];
-    const map: Record<string, string> = {};
-
-    for (let i = 1; i < rows.length; i++) {
-      const eventId = rows[i]?.[EVENT_ID_COLUMN_INDEX];
-      const updatedAt = rows[i]?.[UPDATED_AT_COLUMN_INDEX];
-
-      if (eventId) {
-        map[eventId] = updatedAt || '';
-      }
-    }
-
-    return map;
-=======
    * Reports back what updatedAt value is currently stored per eventId.
    *
    * "Updated At" is no longer written to the Sheet (see eventToRow), so
@@ -200,7 +160,6 @@ export class SheetsService {
    */
   async getStoredUpdatedAtMap(): Promise<Record<string, string>> {
     return {};
->>>>>>> updated-sheet
   }
 
   async appendRow(event: CalendarEventDto): Promise<void> {
@@ -210,11 +169,7 @@ export class SheetsService {
 
     const response = await this.sheets.spreadsheets.values.get({
       spreadsheetId,
-<<<<<<< HEAD
-      range: `${sheetName}!A:O`,
-=======
       range: `${sheetName}!A:N`,
->>>>>>> updated-sheet
     });
 
     const rows = response.data.values || [];
@@ -263,11 +218,7 @@ export class SheetsService {
 
     await this.sheets.spreadsheets.values.update({
       spreadsheetId,
-<<<<<<< HEAD
-      range: `${sheetName}!A${insertAtRow}:O${insertAtRow}`,
-=======
       range: `${sheetName}!A${insertAtRow}:N${insertAtRow}`,
->>>>>>> updated-sheet
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [newRow],
@@ -302,11 +253,7 @@ export class SheetsService {
 
   async updateRow(rowIndex: number, event: CalendarEventDto): Promise<void> {
     const row = this.eventToRow(event);
-<<<<<<< HEAD
-    const range = `${this.getSheetName()}!A${rowIndex}:O${rowIndex}`;
-=======
     const range = `${this.getSheetName()}!A${rowIndex}:N${rowIndex}`;
->>>>>>> updated-sheet
     await this.sheets.spreadsheets.values.update({
       spreadsheetId: this.getSpreadsheetId(),
       range,
