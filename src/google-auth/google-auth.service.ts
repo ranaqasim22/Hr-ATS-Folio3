@@ -1,65 +1,68 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { OAuth2Client } from 'google-auth-library';
+import { google } from 'googleapis';
+import { GoogleAuth } from 'google-auth-library';
+import type { JWT } from 'google-auth-library';
 
-/**
- * GoogleAuthService
- * ------------------
- * Single, shared OAuth2 client for the whole app.
- * - Reads GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN from .env
- * - Creates exactly ONE OAuth2Client instance (constructor runs once because
- *   this service + its module are marked @Global() and only ever provided once)
- * - Exposes getAccessToken() which returns a fresh access token,
- *   refreshing automatically via the refresh_token when needed.
- *
- * Because this is @Global(), every other module (CalendarService, etc.)
- * can inject GoogleAuthService without re-importing GoogleAuthModule,
- * and without ever triggering a second OAuth flow on startup.
- */
+const SCOPES = [
+  'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/spreadsheets',
+];
+
 @Injectable()
 export class GoogleAuthService implements OnModuleInit {
   private readonly logger = new Logger(GoogleAuthService.name);
-  private oauth2Client: OAuth2Client;
+  // 👇 Type is now inferred from `googleapis`'s own bundled auth library,
+  // not the standalone `google-auth-library` package — this is what
+  // fixes the "GoogleAuth<AuthClient> is not assignable" TS error.
+  private readonly googleAuth: InstanceType<typeof google.auth.GoogleAuth>;
 
   constructor(private readonly configService: ConfigService) {
-    const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
-    const clientSecret = this.configService.get<string>('GOOGLE_CLIENT_SECRET');
-    const refreshToken = this.configService.get<string>('GOOGLE_REFRESH_TOKEN');
+    const keyFilePath = this.configService.get<string>('GOOGLE_SERVICE_ACCOUNT_KEY_PATH');
+    const keyJson = this.configService.get<string>('GOOGLE_SERVICE_ACCOUNT_KEY');
 
-    if (!clientId || !clientSecret || !refreshToken) {
+    if (!keyFilePath && !keyJson) {
       throw new Error(
-        'Missing Google OAuth env vars: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN',
+        'Missing Google service account credentials: set either GOOGLE_SERVICE_ACCOUNT_KEY_PATH ' +
+          '(path to the JSON key file) or GOOGLE_SERVICE_ACCOUNT_KEY (raw JSON string) in .env',
       );
     }
 
-    // Exactly ONE OAuth2Client for the entire app lifetime.
-    this.oauth2Client = new OAuth2Client(clientId, clientSecret);
-    this.oauth2Client.setCredentials({ refresh_token: refreshToken });
+    this.googleAuth = new google.auth.GoogleAuth({
+      keyFile: keyFilePath || undefined,
+      credentials: keyJson ? JSON.parse(keyJson) : undefined,
+      scopes: SCOPES,
+    });
 
-    this.logger.log('GoogleAuthService initialized (single OAuth2 client created)');
+    this.logger.log(
+      'GoogleAuthService initialized (service account — no OAuth consent or refresh token needed)',
+    );
   }
 
   onModuleInit() {
-    // Nothing to trigger here on purpose — we do NOT eagerly fetch a token
-    // on startup. Tokens are pulled lazily, only when a real request needs one.
-    // This is what prevents "multiple OAuth triggers on startup".
+    // Nothing to trigger here on purpose — no eager token fetch on startup.
   }
 
-  /**
-   * Returns a valid access token, refreshing it under the hood if expired.
-   * google-auth-library caches the token internally and only calls
-   * Google's token endpoint again once it actually expires.
-   */
   async getAccessToken(): Promise<string> {
-    const { token } = await this.oauth2Client.getAccessToken();
+    const client = await this.googleAuth.getClient();
+    const tokenResponse = await client.getAccessToken();
+
+    const token =
+      typeof tokenResponse === 'string' ? tokenResponse : tokenResponse?.token;
+
     if (!token) {
-      throw new Error('Failed to obtain Google access token from refresh token');
+      throw new Error('Failed to obtain Google access token from service account');
     }
+
     return token;
   }
 
-  /** Expose the raw client in case another service needs it directly (Drive, Sheets, etc). */
-  getClient(): OAuth2Client {
-    return this.oauth2Client;
+  async getClient(): Promise<JWT> {
+    return this.googleAuth.getClient() as unknown as Promise<JWT>;
   }
+
+getGoogleAuth(): any {
+  return this.googleAuth;
+}
 }
