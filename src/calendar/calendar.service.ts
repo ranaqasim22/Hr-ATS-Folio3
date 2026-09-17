@@ -68,19 +68,28 @@ export class CalendarService {
     }
 
     const groqKey2 = this.configService.get<string>('GROQ_API_KEY_2');
+    const groqKey3 = this.configService.get<string>('GROQ_API_KEY_3');
 
-    this.GROQ_API_KEYS = [groqKey, groqKey2].filter(
+    this.GROQ_API_KEYS = [groqKey, groqKey2, groqKey3].filter(
       (key): key is string => Boolean(key && key.trim()),
     );
 
     this.logger.log(`Groq: ${this.GROQ_API_KEYS.length} API key(s) configured for rotation.`);
   }
 
+  private getCalendarId(): string {
+    return (
+      this.configService.get<string>('CALENDAR_ID')?.trim() || 'primary'
+    );
+  }
+
   async getInterviewEvents(
     timeMin: Date = new Date(),
     timeMax: Date = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-     knownUpdatedAt?: Record<string, string>,
+    knownUpdatedAt?: Record<string, string>,
+    options: { recentOnly?: boolean } = {},
   ): Promise<CalendarEventDto[]> {
+    const recentOnly = options.recentOnly !== false;
     const access_token = await this.googleAuthService.getAccessToken();
 
     const params = new URLSearchParams({
@@ -90,7 +99,7 @@ export class CalendarService {
       showDeleted: 'true',
     });
 
-    const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params.toString()}`;
+    const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.getCalendarId())}/events?${params.toString()}`;
 
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${access_token}` },
@@ -109,21 +118,44 @@ export class CalendarService {
 
     this.logger.log(`Fetched ${events.length} events, ${hrEvents.length} HR events`);
 
-    // Only keep events that were created OR updated (which also covers
-    // cancellations, since Google bumps `updated` on delete) within the
-    // last 15 minutes. This runs BEFORE the Groq call so we never spend
-    // Groq calls on events that would just get filtered out afterwards.
-    const recentHrEvents = hrEvents.filter((event) => this.isEventRecent(event));
+    // In delta mode (default) only keep events that were created OR updated
+    // (which also covers cancellations, since Google bumps `updated` on
+    // delete) within the recent window. This runs BEFORE the Groq call so we
+    // never spend Groq calls on events that would just get filtered out
+    // afterwards. In full-sync mode every HR event is processed instead.
+    let candidates = recentOnly
+      ? hrEvents.filter((event) => this.isEventRecent(event))
+      : hrEvents;
+
+    // Skip events already in the Sheet at an identical version BEFORE any
+    // Groq call. Google's `updated` timestamp is the version — TrackerService
+    // stores it in column O and passes the map back in here. Previously this
+    // map was accepted but unused, so every startup/sync re-sent all
+    // candidates to Groq and burned the daily token quota (429 rate limits).
+    if (knownUpdatedAt && Object.keys(knownUpdatedAt).length > 0) {
+      const beforeSkip = candidates.length;
+      candidates = candidates.filter(
+        (event) => knownUpdatedAt[event.id] !== (event.updated || ''),
+      );
+
+      if (candidates.length !== beforeSkip) {
+        this.logger.log(
+          `Skipped ${beforeSkip - candidates.length} already-synced event(s) — no Groq call needed for them`,
+        );
+      }
+    }
 
     this.logger.log(
-  `${recentHrEvents.length} of ${hrEvents.length} HR events are within the last ${this.RECENT_WINDOW_MS / 60000} minutes — only these go to Groq`,
-);
+      recentOnly
+        ? `${candidates.length} of ${hrEvents.length} HR events are within the last ${this.RECENT_WINDOW_MS / 60000} minutes — only these go to Groq`
+        : `Full sync: sending all ${candidates.length} HR events to Groq`,
+    );
 
-    const cancelledEvents = recentHrEvents.filter(
+    const cancelledEvents = candidates.filter(
       (event) => event.status === 'cancelled' && !event.summary,
     );
 
-    const eventsForGroq = recentHrEvents.filter(
+    const eventsForGroq = candidates.filter(
       (event) => !(event.status === 'cancelled' && !event.summary),
     );
 
@@ -167,11 +199,11 @@ export class CalendarService {
     });
 
     this.logger.log(
-  `Fetched ${events.length} events, ${hrEvents.length} HR events, ${parsed.length} interview events shown (last ${this.RECENT_WINDOW_MS / 60000} min window)`,
-);
+      `Fetched ${events.length} events, ${hrEvents.length} HR events, ${parsed.length} interview events processed (${recentOnly ? `last ${this.RECENT_WINDOW_MS / 60000} min window` : 'full sync'})`,
+    );
 
-    // No extra filtering needed here — we already restricted to the
-    // recent window before doing any Groq work above.
+    // No extra filtering needed here — in delta mode we already restricted
+    // to the recent window before doing any Groq work above.
     return parsed;
   }
 
@@ -319,6 +351,7 @@ For each event return:
 {
   "index": 0,
   "isInterview": true,
+  "candidateName": "",
   "position": "",
   "interviewStage": "",
   "type": "",
@@ -333,6 +366,12 @@ FIELD DEFINITIONS:
 
 position:
 Job/role being interviewed for.
+
+candidateName:
+The name of the candidate being interviewed, taken from the
+calendar event only (event title/summary, attendee names, or
+description). Never use the CV for this. Return "" only if the
+candidate name cannot be clearly identified from the event.
 
 interviewStage:
 Recruitment stage or round.
@@ -361,9 +400,6 @@ supported. Do NOT assume an attendee is the candidate.
 
 resumeLink:
 Resume/CV link only when explicitly present.
-
-Do NOT return candidateName.
-Candidate name is handled by the CV parser.
 
 Return exactly one result for every input event.
 Keep the same index.
@@ -600,13 +636,26 @@ ${JSON.stringify(formattedEvents)}
 
     const emailAddress = aiResult.emailAddress || emailMatches[0] || '';
 
+    // Every email on the event (attendees + organizer + description), so the
+    // sync step can sort them into candidate / recruiter / interviewers without
+    // losing any.
+    const attendeeEmails = attendees.map((a: any) => a.email).filter(Boolean);
+    const organizerEmails = event.organizer?.email ? [event.organizer.email] : [];
+    const emails = Array.from(
+      new Set(
+        [...attendeeEmails, ...organizerEmails, ...emailMatches]
+          .map((e: string) => e.trim())
+          .filter(Boolean),
+      ),
+    );
+
     const resumeLink =
       aiResult.resumeLink ||
       this.extractAttachmentResumeLink(event) ||
       this.extractResumeLink(description);
 
     return {
-      candidateName: '',
+      candidateName: this.extractCandidateName(event, aiResult.candidateName || '', recruiter, interviewers),
       position: aiResult.position || '',
       interviewStage: aiResult.interviewStage || '',
       type: aiResult.type || '',
@@ -617,6 +666,7 @@ ${JSON.stringify(formattedEvents)}
       recruiter,
       contactNumber,
       emailAddress,
+      emails,
       resumeLink,
       eventId: event.id,
       createdAt: event.created || '',
@@ -626,6 +676,18 @@ ${JSON.stringify(formattedEvents)}
   }
 
   private createCancelledEventDto(event: any): CalendarEventDto {
+    const attendees = event.attendees || [];
+    const emails = Array.from(
+      new Set(
+        [
+          ...attendees.map((a: any) => a.email),
+          ...(event.organizer?.email ? [event.organizer.email] : []),
+        ]
+          .filter(Boolean)
+          .map((e: string) => e.trim()),
+      ),
+    );
+
     return {
       candidateName: '',
       position: '',
@@ -638,6 +700,7 @@ ${JSON.stringify(formattedEvents)}
       recruiter: '',
       contactNumber: '',
       emailAddress: '',
+      emails,
       resumeLink: '',
       eventId: event.id,
       createdAt: event.created || '',
@@ -654,6 +717,42 @@ ${JSON.stringify(formattedEvents)}
     const recruiterAttendee = attendees.find((a: any) => a.organizer);
 
     return recruiterAttendee?.email || '';
+  }
+
+  /**
+   * Candidate name ALWAYS comes from the calendar event (never the CV).
+   * Priority: Groq's read of the event title/description, then an attendee
+   * who is clearly not the recruiter/HR and not an interviewer.
+   */
+  private extractCandidateName(
+    event: any,
+    aiName: string,
+    recruiter: string,
+    interviewers: string[],
+  ): string {
+    if (aiName && aiName.trim()) {
+      return aiName.trim();
+    }
+
+    const attendees = event.attendees || [];
+    const interviewerSet = new Set(
+      interviewers.map((item: string) => item.toLowerCase()),
+    );
+    const recruiterEmail = (recruiter || '').toLowerCase();
+
+    for (const attendee of attendees) {
+      const email = (attendee.email || '').toLowerCase();
+      const name = (attendee.displayName || '').trim();
+
+      if (!name) continue;
+      if (email === this.HR_SCHEDULING_EMAIL.toLowerCase()) continue;
+      if (email && email === recruiterEmail) continue;
+      if (interviewerSet.has(email) || interviewerSet.has(name.toLowerCase())) continue;
+
+      return name;
+    }
+
+    return '';
   }
 
   private extractResumeLink(description: string): string {

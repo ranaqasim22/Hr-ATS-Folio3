@@ -10,6 +10,7 @@ export class CalendarEventDto {
   recruiter: string;
   contactNumber: string;
   emailAddress: string;
+  emails: string[];
   resumeLink: string;
   eventId: string;
   createdAt: string;

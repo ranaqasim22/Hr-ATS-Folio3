@@ -147,6 +147,32 @@ export class SheetsService {
     return index === -1 ? null : index + 1;
   }
 
+  // True if the sheet already has at least one data row (any eventId in
+  // column M beyond the header). Used at startup to decide whether a full
+  // Groq write is needed (empty sheet) or a cheap delta sync suffices —
+  // avoids burning the entire Groq daily token quota on every restart.
+  async hasStoredEvents(): Promise<boolean> {
+    try {
+      const res = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: this.getSpreadsheetId(),
+        range: this.getDataRange(),
+      });
+
+      const rows: any[][] = res.data.values || [];
+
+      for (let i = 1; i < rows.length; i++) {
+        const eventId = (rows[i]?.[EVENT_ID_COLUMN_INDEX] || '').toString().trim();
+        if (eventId) {
+          return true;
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(`hasStoredEvents read failed: ${err?.message}`);
+    }
+
+    return false;
+  }
+
   /**
    * Reports back what updatedAt value is currently stored per eventId.
    *
@@ -169,7 +195,7 @@ export class SheetsService {
 
     const response = await this.sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!A:N`,
+      range: this.getDataRange(),
     });
 
     const rows = response.data.values || [];
@@ -270,10 +296,11 @@ export class SheetsService {
     const existingRow = await this.findRowByEventId(event.eventId);
 
     if (existingRow) {
-      await this.deleteRow(existingRow);
-      await this.appendRow(event);
-      const newRow = await this.findRowByEventId(event.eventId);
-      return { action: 'updated', rowIndex: newRow as number };
+      // Update the existing row in place — one row per event, no delete +
+      // re-append churn, no duplicate rows ever. Row order stays where it
+      // is; appending a brand-new event still inserts it date-sorted.
+      await this.updateRow(existingRow, event);
+      return { action: 'updated', rowIndex: existingRow };
     }
 
     await this.appendRow(event);
