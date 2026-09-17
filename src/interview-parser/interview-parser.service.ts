@@ -101,9 +101,7 @@ ${eventData.attendees.join(', ')}
     if (!response.ok) {
       const errorText = await response.text();
 
-      this.logger.error(
-        `Groq API error ${response.status}: ${errorText}`,
-      );
+      this.logger.error(`Groq API error ${response.status}: ${errorText}`);
 
       throw new Error('Failed to parse calendar event using Groq');
     }

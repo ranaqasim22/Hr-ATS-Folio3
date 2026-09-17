@@ -14,7 +14,7 @@ import { TrackerModule } from './tracker/tracker.module';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-    ScheduleModule.forRoot(),  // ✅ Add this line
+    ScheduleModule.forRoot(), // ✅ Add this line
     GoogleAuthModule,
     CalendarModule,
     SheetsModule,

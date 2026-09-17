@@ -17,10 +17,8 @@ export class CalendarController {
     const timeMin = from ? new Date(from) : undefined;
     const timeMax = to ? new Date(to) : undefined;
 
-    const events: CalendarEventDto[] = await this.calendarService.getInterviewEvents(
-      timeMin,
-      timeMax,
-    );
+    const events: CalendarEventDto[] =
+      await this.calendarService.getInterviewEvents(timeMin, timeMax);
 
     const wantsHtml = (req.headers.accept || '').includes('text/html');
 

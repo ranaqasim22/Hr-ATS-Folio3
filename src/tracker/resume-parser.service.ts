@@ -19,13 +19,17 @@ export class ResumeParserService {
     const key2 = this.configService.get<string>('GROQ_API_KEY_2');
     const key3 = this.configService.get<string>('GROQ_API_KEY_3');
 
-    this.groqKeys = [key1, key2, key3].filter((k) => Boolean(k && k.trim())) as string[];
+    this.groqKeys = [key1, key2, key3].filter((k) =>
+      Boolean(k && k.trim()),
+    ) as string[];
 
     if (this.groqKeys.length === 0) {
       throw new Error('At least one GROQ_API_KEY is required in .env');
     }
 
-    this.logger.log(`ResumeParser loaded ${this.groqKeys.length} Groq API key(s)`);
+    this.logger.log(
+      `ResumeParser loaded ${this.groqKeys.length} Groq API key(s)`,
+    );
   }
 
   private getNextKey(): string {

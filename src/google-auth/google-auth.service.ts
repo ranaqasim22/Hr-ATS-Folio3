@@ -36,7 +36,9 @@ export class GoogleAuthService implements OnModuleInit {
     this.oauth2Client = new OAuth2Client(clientId, clientSecret);
     this.oauth2Client.setCredentials({ refresh_token: refreshToken });
 
-    this.logger.log('GoogleAuthService initialized (single OAuth2 client created)');
+    this.logger.log(
+      'GoogleAuthService initialized (single OAuth2 client created)',
+    );
   }
 
   onModuleInit() {
@@ -53,7 +55,9 @@ export class GoogleAuthService implements OnModuleInit {
   async getAccessToken(): Promise<string> {
     const { token } = await this.oauth2Client.getAccessToken();
     if (!token) {
-      throw new Error('Failed to obtain Google access token from refresh token');
+      throw new Error(
+        'Failed to obtain Google access token from refresh token',
+      );
     }
     return token;
   }

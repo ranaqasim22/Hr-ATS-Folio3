@@ -11,7 +11,10 @@ export class DriveService {
   private drive: any;
 
   constructor(private readonly googleAuthService: GoogleAuthService) {
-    this.drive = google.drive({ version: 'v3', auth: this.googleAuthService.getClient() });
+    this.drive = google.drive({
+      version: 'v3',
+      auth: this.googleAuthService.getClient(),
+    });
   }
 
   async uploadResume(filePath: string, fileName: string): Promise<string> {
@@ -70,7 +73,10 @@ export class DriveService {
     }
   }
 
-  async downloadAttachment(fileUrl: string, _fileName: string): Promise<string> {
+  async downloadAttachment(
+    fileUrl: string,
+    _fileName: string,
+  ): Promise<string> {
     try {
       let fileId = '';
 
@@ -104,7 +110,11 @@ export class DriveService {
       if (mimeType === 'application/vnd.google-apps.document') {
         this.logger.log('Google Docs detected. Exporting as DOCX...');
         const response = await this.drive.files.export(
-          { fileId, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+          {
+            fileId,
+            mimeType:
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          },
           { responseType: 'arraybuffer' },
         );
         buffer = Buffer.from(response.data);
@@ -123,14 +133,24 @@ export class DriveService {
       }
 
       if (!buffer || buffer.length < 100) {
-        throw new Error(`Downloaded file is invalid or empty: ${finalFileName}`);
+        throw new Error(
+          `Downloaded file is invalid or empty: ${finalFileName}`,
+        );
       }
 
-      const safeName = (finalFileName || 'resume').replace(/[<>:"/\\|?*]/g, '_');
-      const tempPath = path.join(__dirname, `../temp_${Date.now()}_${safeName}`);
+      const safeName = (finalFileName || 'resume').replace(
+        /[<>:"/\\|?*]/g,
+        '_',
+      );
+      const tempPath = path.join(
+        __dirname,
+        `../temp_${Date.now()}_${safeName}`,
+      );
       fs.writeFileSync(tempPath, buffer);
 
-      this.logger.log(`Downloaded attachment: ${tempPath} (${buffer.length} bytes)`);
+      this.logger.log(
+        `Downloaded attachment: ${tempPath} (${buffer.length} bytes)`,
+      );
       return tempPath;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -141,7 +161,9 @@ export class DriveService {
 
   async processResume(event: any): Promise<string> {
     if (event.description) {
-      const linkMatch = event.description.match(/https?:\/\/[^\s]+\.(pdf|doc|docx)/i);
+      const linkMatch = event.description.match(
+        /https?:\/\/[^\s]+\.(pdf|doc|docx)/i,
+      );
       if (linkMatch) {
         this.logger.log(`Resume link found in description: ${linkMatch[0]}`);
         return linkMatch[0];
@@ -150,9 +172,15 @@ export class DriveService {
 
     if (event.attachments && event.attachments.length > 0) {
       const attachment = event.attachments[0];
-      const tempPath = await this.downloadAttachment(attachment.fileUrl, attachment.title || 'resume.pdf');
+      const tempPath = await this.downloadAttachment(
+        attachment.fileUrl,
+        attachment.title || 'resume.pdf',
+      );
       if (tempPath) {
-        const link = await this.uploadResume(tempPath, attachment.title || 'resume.pdf');
+        const link = await this.uploadResume(
+          tempPath,
+          attachment.title || 'resume.pdf',
+        );
         fs.unlinkSync(tempPath);
         return link;
       }

@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 
@@ -46,11 +51,14 @@ export class TrackerService implements OnModuleInit, OnModuleDestroy {
     if (intervalMinutes > 0) {
       // Interval runs are delta-only (recent window), so they never churn the
       // whole sheet — they just pick up newly created/updated events.
-      this.syncTimer = setInterval(() => {
-        this.sync().catch((err) =>
-          this.logger.error(`Interval sync failed: ${err.message}`),
-        );
-      }, intervalMinutes * 60 * 1000);
+      this.syncTimer = setInterval(
+        () => {
+          this.sync().catch((err) =>
+            this.logger.error(`Interval sync failed: ${err.message}`),
+          );
+        },
+        intervalMinutes * 60 * 1000,
+      );
       this.logger.log(
         `Interval sync scheduled every ${intervalMinutes} minute(s).`,
       );
@@ -94,7 +102,8 @@ export class TrackerService implements OnModuleInit, OnModuleDestroy {
       // SYNC_LOOKBACK_DAYS so an event that started before "now" but was just
       // updated is still picked up and synced to the Sheet. On startup (full)
       // every matching HR event in the window is written instead.
-      const lookbackDays = Number(this.configService.get('SYNC_LOOKBACK_DAYS') ?? 7) || 7;
+      const lookbackDays =
+        Number(this.configService.get('SYNC_LOOKBACK_DAYS') ?? 7) || 7;
       const events = await this.calendarService.getInterviewEvents(
         new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000),
         new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
@@ -124,15 +133,22 @@ export class TrackerService implements OnModuleInit, OnModuleDestroy {
           continue;
         }
 
-        const tempPath = await this.driveService.downloadAttachment(resumeLink, 'resume.pdf');
+        const tempPath = await this.driveService.downloadAttachment(
+          resumeLink,
+          'resume.pdf',
+        );
 
         if (!tempPath) {
-          this.logger.warn(`Failed to download resume for event ${event.eventId}`);
+          this.logger.warn(
+            `Failed to download resume for event ${event.eventId}`,
+          );
           continue;
         }
 
-        const resumeText = await this.driveService.extractTextFromResume(tempPath);
-        const parsedData = await this.resumeParserService.extractData(resumeText);
+        const resumeText =
+          await this.driveService.extractTextFromResume(tempPath);
+        const parsedData =
+          await this.resumeParserService.extractData(resumeText);
 
         const candidateEmail = (parsedData.email || '').trim().toLowerCase();
         const organizerEmail = (event.recruiter || '').trim().toLowerCase();
@@ -155,12 +171,13 @@ export class TrackerService implements OnModuleInit, OnModuleDestroy {
           .filter((item: string) => item.toLowerCase() !== candidateEmail)
           .filter((item: string) => item.toLowerCase() !== organizerEmail);
 
+        const resumeName = (parsedData.name || '').trim();
         const fullEvent = {
           ...event,
           contactNumber: parsedData.phone || event.contactNumber,
           emailAddress: candidateEmail || event.emailAddress,
-          // Candidate name always comes from the calendar event, never the CV.
-          candidateName: event.candidateName,
+          // Candidate name from the CV, falling back to the calendar event.
+          candidateName: resumeName || event.candidateName,
           recruiter: organizerEmail || event.recruiter,
           interviewers,
         };
@@ -176,7 +193,9 @@ export class TrackerService implements OnModuleInit, OnModuleDestroy {
 
       this.logger.log(`Sync complete: processed=${processed}`);
     } catch (error) {
-      this.logger.error(`Sync failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(
+        `Sync failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     } finally {
       this.syncInProgress = false;
     }

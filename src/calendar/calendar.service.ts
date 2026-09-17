@@ -36,7 +36,9 @@ export class CalendarService {
     private readonly googleAuthService: GoogleAuthService,
     private readonly configService: ConfigService,
   ) {
-    const configuredEmail = this.configService.get<string>('HR_SCHEDULING_EMAIL');
+    const configuredEmail = this.configService.get<string>(
+      'HR_SCHEDULING_EMAIL',
+    );
     if (!configuredEmail) {
       throw new Error(
         'HR_SCHEDULING_EMAIL is not set in .env — please set it before starting the app.',
@@ -44,7 +46,9 @@ export class CalendarService {
     }
     this.HR_SCHEDULING_EMAIL = configuredEmail;
 
-    const configuredWindowMinutes = this.configService.get<string>('RECENT_WINDOW_MINUTES');
+    const configuredWindowMinutes = this.configService.get<string>(
+      'RECENT_WINDOW_MINUTES',
+    );
     const parsedWindowMinutes = configuredWindowMinutes
       ? Number(configuredWindowMinutes)
       : NaN;
@@ -74,13 +78,13 @@ export class CalendarService {
       (key): key is string => Boolean(key && key.trim()),
     );
 
-    this.logger.log(`Groq: ${this.GROQ_API_KEYS.length} API key(s) configured for rotation.`);
+    this.logger.log(
+      `Groq: ${this.GROQ_API_KEYS.length} API key(s) configured for rotation.`,
+    );
   }
 
   private getCalendarId(): string {
-    return (
-      this.configService.get<string>('CALENDAR_ID')?.trim() || 'primary'
-    );
+    return this.configService.get<string>('CALENDAR_ID')?.trim() || 'primary';
   }
 
   async getInterviewEvents(
@@ -116,7 +120,9 @@ export class CalendarService {
 
     const hrEvents = events.filter((event) => this.isRelevantEvent(event));
 
-    this.logger.log(`Fetched ${events.length} events, ${hrEvents.length} HR events`);
+    this.logger.log(
+      `Fetched ${events.length} events, ${hrEvents.length} HR events`,
+    );
 
     // In delta mode (default) only keep events that were created OR updated
     // (which also covers cancellations, since Google bumps `updated` on
@@ -165,7 +171,9 @@ export class CalendarService {
 
     const batches = this.createBatches(eventsForGroq, GROQ_BATCH_SIZE);
 
-    this.logger.log(`Processing ${eventsForGroq.length} events in ${batches.length} Groq batches`);
+    this.logger.log(
+      `Processing ${eventsForGroq.length} events in ${batches.length} Groq batches`,
+    );
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const batch = batches[batchIndex];
@@ -235,7 +243,9 @@ export class CalendarService {
   private hasHrScheduling(event: any): boolean {
     const attendees = event.attendees || [];
     return attendees.some(
-      (a: any) => (a.email || '').toLowerCase() === this.HR_SCHEDULING_EMAIL.toLowerCase(),
+      (a: any) =>
+        (a.email || '').toLowerCase() ===
+        this.HR_SCHEDULING_EMAIL.toLowerCase(),
     );
   }
 
@@ -263,8 +273,10 @@ export class CalendarService {
 
     const now = Date.now();
 
-    const createdRecent = !Number.isNaN(createdTs) && now - createdTs <= this.RECENT_WINDOW_MS;
-    const updatedRecent = !Number.isNaN(updatedTs) && now - updatedTs <= this.RECENT_WINDOW_MS;
+    const createdRecent =
+      !Number.isNaN(createdTs) && now - createdTs <= this.RECENT_WINDOW_MS;
+    const updatedRecent =
+      !Number.isNaN(updatedTs) && now - updatedTs <= this.RECENT_WINDOW_MS;
 
     return createdRecent || updatedRecent;
   }
@@ -316,7 +328,9 @@ export class CalendarService {
     const formattedEvents = events.map((event, index) => {
       const description = this.cleanDescription(event.description || '');
 
-      const attendees = (event.attendees || []).map((a: any) => a.email).filter(Boolean);
+      const attendees = (event.attendees || [])
+        .map((a: any) => a.email)
+        .filter(Boolean);
 
       return {
         index,
@@ -432,76 +446,84 @@ ${JSON.stringify(formattedEvents)}
         const apiKey = this.GROQ_API_KEYS[this.currentGroqKeyIndex];
 
         try {
-          const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'openai/gpt-oss-120b',
-            messages: [
-              {
-                role: 'system',
-                content: 'You are a precise HR interview event parser. Return only valid JSON.',
+          const response = await fetch(
+            'https://api.groq.com/openai/v1/chat/completions',
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
               },
-              {
-                role: 'user',
-                content: prompt,
-              },
-            ],
-            temperature: 0,
-            response_format: {
-              type: 'json_object',
+              body: JSON.stringify({
+                model: 'openai/gpt-oss-120b',
+                messages: [
+                  {
+                    role: 'system',
+                    content:
+                      'You are a precise HR interview event parser. Return only valid JSON.',
+                  },
+                  {
+                    role: 'user',
+                    content: prompt,
+                  },
+                ],
+                temperature: 0,
+                response_format: {
+                  type: 'json_object',
+                },
+              }),
             },
-          }),
-        });
+          );
 
-        if (response.ok) {
-          const data: any = await response.json();
-          const content = data?.choices?.[0]?.message?.content;
+          if (response.ok) {
+            const data: any = await response.json();
+            const content = data?.choices?.[0]?.message?.content;
 
-          if (!content) {
-            this.logger.warn('Groq returned an empty batch response.');
-            return events.map(() => ({}));
-          }
-
-          try {
-            const parsed = JSON.parse(content);
-
-            if (Array.isArray(parsed)) {
-              return this.normalizeBatchResults(parsed, events.length);
+            if (!content) {
+              this.logger.warn('Groq returned an empty batch response.');
+              return events.map(() => ({}));
             }
 
-            if (Array.isArray(parsed.events)) {
-              return this.normalizeBatchResults(parsed.events, events.length);
-            }
+            try {
+              const parsed = JSON.parse(content);
 
-            if (Array.isArray(parsed.results)) {
-              return this.normalizeBatchResults(parsed.results, events.length);
-            }
-
-            // Fallback: some models return an object keyed by index instead
-            // of an array, e.g. { "0": {...}, "1": {...} }.
-            if (parsed && typeof parsed === 'object') {
-              const values = Object.values(parsed);
-              const looksLikeIndexedResults = values.every(
-                (v) => v && typeof v === 'object' && 'isInterview' in (v as any),
-              );
-
-              if (values.length > 0 && looksLikeIndexedResults) {
-                return this.normalizeBatchResults(values, events.length);
+              if (Array.isArray(parsed)) {
+                return this.normalizeBatchResults(parsed, events.length);
               }
-            }
 
-            this.logger.warn(
-              `Groq batch response does not contain a recognizable events array. Raw content: ${content}`,
-            );
-            return events.map(() => ({}));
-          } catch {
-            this.logger.error(`Groq returned invalid JSON: ${content}`);
-            return events.map(() => ({}));
-          }
+              if (Array.isArray(parsed.events)) {
+                return this.normalizeBatchResults(parsed.events, events.length);
+              }
+
+              if (Array.isArray(parsed.results)) {
+                return this.normalizeBatchResults(
+                  parsed.results,
+                  events.length,
+                );
+              }
+
+              // Fallback: some models return an object keyed by index instead
+              // of an array, e.g. { "0": {...}, "1": {...} }.
+              if (parsed && typeof parsed === 'object') {
+                const values = Object.values(parsed);
+                const looksLikeIndexedResults = values.every(
+                  (v) =>
+                    v && typeof v === 'object' && 'isInterview' in (v as any),
+                );
+
+                if (values.length > 0 && looksLikeIndexedResults) {
+                  return this.normalizeBatchResults(values, events.length);
+                }
+              }
+
+              this.logger.warn(
+                `Groq batch response does not contain a recognizable events array. Raw content: ${content}`,
+              );
+              return events.map(() => ({}));
+            } catch {
+              this.logger.error(`Groq returned invalid JSON: ${content}`);
+              return events.map(() => ({}));
+            }
           }
 
           if (response.status === 429) {
@@ -559,7 +581,9 @@ ${JSON.stringify(formattedEvents)}
           }
         }
 
-        this.logger.warn(`Waiting ${Math.ceil(waitTime / 1000)} seconds before retry.`);
+        this.logger.warn(
+          `Waiting ${Math.ceil(waitTime / 1000)} seconds before retry.`,
+        );
 
         await this.sleep(waitTime);
 
@@ -593,7 +617,9 @@ ${JSON.stringify(formattedEvents)}
     const summary: string = event.summary || '';
 
     if (!aiResult || Object.keys(aiResult).length === 0) {
-      this.logger.debug(`Skipping event because Groq returned no result: "${summary}"`);
+      this.logger.debug(
+        `Skipping event because Groq returned no result: "${summary}"`,
+      );
       return null;
     }
 
@@ -605,7 +631,8 @@ ${JSON.stringify(formattedEvents)}
     const attendees = event.attendees || [];
     const description = this.cleanDescription(event.description || '');
 
-    const startDateTime: string = event.start?.dateTime || event.start?.date || '';
+    const startDateTime: string =
+      event.start?.dateTime || event.start?.date || '';
 
     const [date, timeWithOffset] = startDateTime.includes('T')
       ? startDateTime.split('T')
@@ -623,14 +650,18 @@ ${JSON.stringify(formattedEvents)}
         .map((name) => name.trim())
         .filter(Boolean);
     } else if (Array.isArray(aiResult.interviewers)) {
-      interviewers = aiResult.interviewers.map((item: any) => String(item).trim()).filter(Boolean);
+      interviewers = aiResult.interviewers
+        .map((item: any) => String(item).trim())
+        .filter(Boolean);
     }
 
-    const recruiter = aiResult.recruiter || this.extractRecruiter(event, attendees);
+    const recruiter =
+      aiResult.recruiter || this.extractRecruiter(event, attendees);
 
     const phoneMatch = description.match(PHONE_REGEX);
 
-    const contactNumber = aiResult.contactNumber || (phoneMatch ? phoneMatch[1].trim() : '');
+    const contactNumber =
+      aiResult.contactNumber || (phoneMatch ? phoneMatch[1].trim() : '');
 
     const emailMatches = description.match(EMAIL_REGEX) || [];
 
@@ -640,7 +671,9 @@ ${JSON.stringify(formattedEvents)}
     // sync step can sort them into candidate / recruiter / interviewers without
     // losing any.
     const attendeeEmails = attendees.map((a: any) => a.email).filter(Boolean);
-    const organizerEmails = event.organizer?.email ? [event.organizer.email] : [];
+    const organizerEmails = event.organizer?.email
+      ? [event.organizer.email]
+      : [];
     const emails = Array.from(
       new Set(
         [...attendeeEmails, ...organizerEmails, ...emailMatches]
@@ -655,7 +688,12 @@ ${JSON.stringify(formattedEvents)}
       this.extractResumeLink(description);
 
     return {
-      candidateName: this.extractCandidateName(event, aiResult.candidateName || '', recruiter, interviewers),
+      candidateName: this.extractCandidateName(
+        event,
+        aiResult.candidateName || '',
+        recruiter,
+        interviewers,
+      ),
       position: aiResult.position || '',
       interviewStage: aiResult.interviewStage || '',
       type: aiResult.type || '',
@@ -747,7 +785,8 @@ ${JSON.stringify(formattedEvents)}
       if (!name) continue;
       if (email === this.HR_SCHEDULING_EMAIL.toLowerCase()) continue;
       if (email && email === recruiterEmail) continue;
-      if (interviewerSet.has(email) || interviewerSet.has(name.toLowerCase())) continue;
+      if (interviewerSet.has(email) || interviewerSet.has(name.toLowerCase()))
+        continue;
 
       return name;
     }

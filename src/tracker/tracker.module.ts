@@ -7,13 +7,13 @@ import { SheetsModule } from '../sheets/sheets.module';
 
 @Module({
   imports: [
-    CalendarModule,  // ✅ For CalendarService
-    DriveModule,     // ✅ For DriveService
-    SheetsModule,    // ✅ For SheetsService
+    CalendarModule, // ✅ For CalendarService
+    DriveModule, // ✅ For DriveService
+    SheetsModule, // ✅ For SheetsService
   ],
   providers: [
-    TrackerService,         // ✅ TrackerService
-    ResumeParserService,    // ✅ ResumeParserService
+    TrackerService, // ✅ TrackerService
+    ResumeParserService, // ✅ ResumeParserService
   ],
   exports: [TrackerService, ResumeParserService],
 })

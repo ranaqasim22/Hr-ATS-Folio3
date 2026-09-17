@@ -70,7 +70,9 @@ export class SheetsService {
       this.formatDate(event.date),
       event.time ?? '',
       event.location ?? '',
-      Array.isArray(event.interviewers) ? event.interviewers.join(', ') : event.interviewers ?? '',
+      Array.isArray(event.interviewers)
+        ? event.interviewers.join(', ')
+        : (event.interviewers ?? ''),
       event.recruiter ?? '',
       event.contactNumber ? `'${event.contactNumber}` : '',
       event.emailAddress ?? '',
@@ -142,7 +144,8 @@ export class SheetsService {
     });
     const rows = response.data.values || [];
     const index = rows.findIndex(
-      (row: any[], i: number) => i > 0 && row[EVENT_ID_COLUMN_INDEX] === eventId,
+      (row: any[], i: number) =>
+        i > 0 && row[EVENT_ID_COLUMN_INDEX] === eventId,
     );
     return index === -1 ? null : index + 1;
   }
@@ -161,7 +164,9 @@ export class SheetsService {
       const rows: any[][] = res.data.values || [];
 
       for (let i = 1; i < rows.length; i++) {
-        const eventId = (rows[i]?.[EVENT_ID_COLUMN_INDEX] || '').toString().trim();
+        const eventId = (rows[i]?.[EVENT_ID_COLUMN_INDEX] || '')
+          .toString()
+          .trim();
         if (eventId) {
           return true;
         }
@@ -274,7 +279,9 @@ export class SheetsService {
       },
     });
 
-    this.logger.log(`Deleted row ${rowIndex} (will be re-inserted with fresh data)`);
+    this.logger.log(
+      `Deleted row ${rowIndex} (will be re-inserted with fresh data)`,
+    );
   }
 
   async updateRow(rowIndex: number, event: CalendarEventDto): Promise<void> {
