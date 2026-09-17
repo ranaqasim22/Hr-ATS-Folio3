@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { OAuth2Client } from 'google-auth-library';
+import { google } from 'googleapis';
 
 /**
  * GoogleAuthService
@@ -19,26 +19,25 @@ import { OAuth2Client } from 'google-auth-library';
 @Injectable()
 export class GoogleAuthService implements OnModuleInit {
   private readonly logger = new Logger(GoogleAuthService.name);
-  private oauth2Client: OAuth2Client;
+  private jwtClient: InstanceType<typeof google.auth.JWT>;
 
   constructor(private readonly configService: ConfigService) {
-    const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
-    const clientSecret = this.configService.get<string>('GOOGLE_CLIENT_SECRET');
-    const refreshToken = this.configService.get<string>('GOOGLE_REFRESH_TOKEN');
+const keyFile = this.configService.get<string>('GOOGLE_SERVICE_ACCOUNT_KEY_PATH');
 
-    if (!clientId || !clientSecret || !refreshToken) {
-      throw new Error(
-        'Missing Google OAuth env vars: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN',
-      );
-    }
+if (!keyFile) {
+  throw new Error(
+    'Missing Google service account env var: GOOGLE_SERVICE_ACCOUNT_KEY_PATH',
+  );
+}
 
-    // Exactly ONE OAuth2Client for the entire app lifetime.
-    this.oauth2Client = new OAuth2Client(clientId, clientSecret);
-    this.oauth2Client.setCredentials({ refresh_token: refreshToken });
-
-    this.logger.log(
-      'GoogleAuthService initialized (single OAuth2 client created)',
-    );
+this.jwtClient = new google.auth.JWT({
+  keyFile,
+  scopes: [
+    'https://www.googleapis.com/auth/drive',
+    'https://www.googleapis.com/auth/calendar',
+    'https://www.googleapis.com/auth/spreadsheets',
+  ],
+});
   }
 
   onModuleInit() {
@@ -53,7 +52,7 @@ export class GoogleAuthService implements OnModuleInit {
    * Google's token endpoint again once it actually expires.
    */
   async getAccessToken(): Promise<string> {
-    const { token } = await this.oauth2Client.getAccessToken();
+    const { token } = await this.jwtClient.getAccessToken();
     if (!token) {
       throw new Error(
         'Failed to obtain Google access token from refresh token',
@@ -63,7 +62,7 @@ export class GoogleAuthService implements OnModuleInit {
   }
 
   /** Expose the raw client in case another service needs it directly (Drive, Sheets, etc). */
-  getClient(): OAuth2Client {
-    return this.oauth2Client;
-  }
+getClient(): InstanceType<typeof google.auth.JWT> {
+  return this.jwtClient;
+}
 }
