@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import * as fs from 'fs';
 
 import { CalendarService } from '../calendar/calendar.service';
@@ -7,10 +12,28 @@ import { SheetsService } from '../sheets/sheets.service';
 import { ResumeParserService } from './resume-parser.service';
 
 @Injectable()
-export class TrackerService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(TrackerService.name);
+export class TrackerService
+  implements OnModuleInit, OnModuleDestroy
+{
+  private readonly logger = new Logger(
+    TrackerService.name,
+  );
+
   private syncTimer: NodeJS.Timeout | null = null;
+
   private syncInProgress = false;
+
+  /**
+   * eventId -> updatedAt
+   *
+   * Sirf current application run mein
+   * same event/version ko dobara process
+   * hone se rokta hai.
+   */
+  private readonly syncedVersions = new Map<
+    string,
+    string
+  >();
 
   constructor(
     private readonly calendarService: CalendarService,
@@ -20,17 +43,48 @@ export class TrackerService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
-    this.sync().catch((err) =>
-      this.logger.error(`Startup sync failed: ${err.message}`),
+    /**
+     * Startup par FULL sync.
+     *
+     * false = recentOnly false
+     */
+    this.sync(false).catch((error) => {
+      this.logger.error(
+        `Startup sync failed: ${
+          error instanceof Error
+            ? error.message
+            : String(error)
+        }`,
+      );
+    });
+
+    /**
+     * Interval:
+     * SYNC_INTERVAL_MINUTES
+     *
+     * Example:
+     * SYNC_INTERVAL_MINUTES=2
+     */
+    const intervalMinutes = Number(
+      process.env.SYNC_INTERVAL_MINUTES ?? 0,
     );
 
-    const intervalMinutes = Number(process.env.SYNC_INTERVAL_MINUTES ?? 0);
     if (intervalMinutes > 0) {
       this.syncTimer = setInterval(() => {
-        this.sync().catch((err) =>
-          this.logger.error(`Interval sync failed: ${err.message}`),
-        );
+        /**
+         * true = recentOnly true
+         */
+        this.sync(true).catch((error) => {
+          this.logger.error(
+            `Interval sync failed: ${
+              error instanceof Error
+                ? error.message
+                : String(error)
+            }`,
+          );
+        });
       }, intervalMinutes * 60 * 1000);
+
       this.logger.log(
         `Interval sync scheduled every ${intervalMinutes} minute(s).`,
       );
@@ -40,70 +94,272 @@ export class TrackerService implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy() {
     if (this.syncTimer) {
       clearInterval(this.syncTimer);
+      this.syncTimer = null;
     }
   }
 
-  async sync() {
+  async sync(
+    recentOnly = true,
+  ): Promise<void> {
     if (this.syncInProgress) {
-      this.logger.warn('Sync already in progress — skipping this run');
+      this.logger.warn(
+        'Sync already in progress — skipping this run',
+      );
       return;
     }
+
     this.syncInProgress = true;
 
-    this.logger.log('Starting interview sync run');
+    this.logger.log(
+      `Starting interview sync run (${
+        recentOnly
+          ? 'recent events only'
+          : 'full startup sync'
+      })`,
+    );
 
     try {
-      const knownUpdatedAt = await this.sheetsService.getStoredUpdatedAtMap();
-      const events = await this.calendarService.getInterviewEvents(
-        new Date(),
-        new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-        knownUpdatedAt,
+      /**
+       * STARTUP:
+       * 30 days past -> 30 days future
+       *
+       * INTERVAL:
+       * now -> 30 days future
+       */
+      const timeMin = recentOnly
+        ? new Date()
+        : new Date(
+            Date.now() -
+              30 * 24 * 60 * 60 * 1000,
+          );
+
+      const timeMax = new Date(
+        Date.now() +
+          30 * 24 * 60 * 60 * 1000,
+      );
+
+      this.logger.log(
+        `Calendar range: ${timeMin.toISOString()} -> ${timeMax.toISOString()}`,
+      );
+
+      /**
+       * IMPORTANT:
+       *
+       * getStoredUpdatedAtMap() yahan nahi hai.
+       *
+       * updatedAt Sheet mein store nahi ho raha.
+       *
+       * CalendarService ko knownUpdatedAt bhi nahi
+       * bhej rahe.
+       */
+      const events =
+        await this.calendarService.getInterviewEvents(
+          timeMin,
+          timeMax,
+          {
+            recentOnly,
+          },
+        );
+
+      this.logger.log(
+        `CalendarService returned ${events.length} event(s)`,
       );
 
       let processed = 0;
+      let skipped = 0;
+
       for (const event of events) {
-        const resumeLink = event.resumeLink || '';
+        /**
+         * Same event + same version ko current
+         * application run mein dobara process
+         * nahi karna.
+         */
+        const version =
+          event.updatedAt || '';
+
+        if (
+          this.syncedVersions.get(
+            event.eventId,
+          ) === version
+        ) {
+          this.logger.debug(
+            `Event ${event.eventId} already processed with same version — skipping`,
+          );
+
+          skipped++;
+          continue;
+        }
+
+        const resumeLink =
+          event.resumeLink || '';
 
         if (!resumeLink) {
-          this.logger.warn(`No resume link found for event ${event.eventId}`);
+          this.logger.warn(
+            `No resume link found for event ${event.eventId}`,
+          );
+
+          skipped++;
           continue;
         }
 
-        const tempPath = await this.driveService.downloadAttachment(resumeLink, 'resume.pdf');
+        let tempPath: string | null =
+          null;
 
-        if (!tempPath) {
-          this.logger.warn(`Failed to download resume for event ${event.eventId}`);
-          continue;
-        }
+        try {
+          /**
+           * Download resume
+           */
+          tempPath =
+            await this.driveService.downloadAttachment(
+              resumeLink,
+              'resume.pdf',
+            );
 
-        const resumeText = await this.driveService.extractTextFromResume(tempPath);
-        const parsedData = await this.resumeParserService.extractData(resumeText);
+          if (!tempPath) {
+            this.logger.warn(
+              `Failed to download resume for event ${event.eventId}`,
+            );
 
-        const candidateEmail = (parsedData.email || '').trim().toLowerCase();
+            skipped++;
+            continue;
+          }
 
-        const fullEvent = {
-          ...event,
-          contactNumber: parsedData.phone || event.contactNumber,
-          emailAddress: parsedData.email || event.emailAddress,
-          candidateName: parsedData.name || event.candidateName,
-          interviewers: candidateEmail
-            ? event.interviewers.filter(
-                (e: string) => e.trim().toLowerCase() !== candidateEmail,
-              )
-            : event.interviewers,
-        };
+          /**
+           * Extract resume text
+           */
+          const resumeText =
+            await this.driveService.extractTextFromResume(
+              tempPath,
+            );
 
-        await this.sheetsService.syncEvent(fullEvent);
-        processed++;
+          if (!resumeText?.trim()) {
+            this.logger.warn(
+              `Resume text is empty for event ${event.eventId}`,
+            );
 
-        if (fs.existsSync(tempPath)) {
-          fs.unlinkSync(tempPath);
+            skipped++;
+            continue;
+          }
+
+          /**
+           * Parse resume
+           */
+          const parsedData =
+            await this.resumeParserService.extractData(
+              resumeText,
+            );
+
+          const candidateEmail = (
+            parsedData.email || ''
+          )
+            .trim()
+            .toLowerCase();
+
+          /**
+           * Combine Calendar + Resume data
+           */
+          const fullEvent = {
+            ...event,
+
+            contactNumber:
+              parsedData.phone ||
+              event.contactNumber,
+
+            emailAddress:
+              parsedData.email ||
+              event.emailAddress,
+
+            candidateName:
+              parsedData.name ||
+              event.candidateName,
+
+            interviewers:
+              candidateEmail
+                ? (
+                    event.interviewers ||
+                    []
+                  ).filter(
+                    (email: string) =>
+                      email
+                        .trim()
+                        .toLowerCase() !==
+                      candidateEmail,
+                  )
+                : event.interviewers,
+          };
+
+          /**
+           * SheetService itself checks eventId.
+           *
+           * Existing event:
+           * update/reinsert
+           *
+           * New event:
+           * create
+           */
+          const result =
+            await this.sheetsService.syncEvent(
+              fullEvent,
+            );
+
+          this.logger.log(
+            `Sheet sync: eventId=${event.eventId}, action=${result.action}, row=${result.rowIndex}`,
+          );
+
+          /**
+           * Sirf successful Sheet sync ke baad
+           * version remember karo.
+           */
+          this.syncedVersions.set(
+            event.eventId,
+            version,
+          );
+
+          processed++;
+        } catch (error) {
+          this.logger.error(
+            `Failed processing event ${event.eventId}: ${
+              error instanceof Error
+                ? error.message
+                : String(error)
+            }`,
+          );
+        } finally {
+          /**
+           * Temporary resume file delete.
+           */
+          if (
+            tempPath &&
+            fs.existsSync(tempPath)
+          ) {
+            try {
+              fs.unlinkSync(
+                tempPath,
+              );
+            } catch (error) {
+              this.logger.warn(
+                `Could not delete temp file ${tempPath}: ${
+                  error instanceof Error
+                    ? error.message
+                    : String(error)
+                }`,
+              );
+            }
+          }
         }
       }
 
-      this.logger.log(`Sync complete: processed=${processed}`);
+      this.logger.log(
+        `Sync complete: processed=${processed}, skipped=${skipped}, total=${events.length}`,
+      );
     } catch (error) {
-      this.logger.error(`Sync failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(
+        `Sync failed: ${
+          error instanceof Error
+            ? error.message
+            : String(error)
+        }`,
+      );
     } finally {
       this.syncInProgress = false;
     }
