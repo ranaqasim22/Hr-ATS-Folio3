@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { google } from 'googleapis';
 import { ConfigService } from '@nestjs/config';
 import { CalendarEventDto } from '../calendar/dto/calendar-event.dto';
+import { GoogleAuthService } from '../google-auth/google-auth.service';
 
 const EVENT_ID_COLUMN_INDEX = 12;
 
@@ -15,32 +16,16 @@ export class SheetsService {
   private readonly logger = new Logger(SheetsService.name);
   private sheets: any;
 
-  constructor(private readonly configService: ConfigService) {
-    const serviceAccountKeyPath = this.configService.get<string>(
-      'GOOGLE_SHEETS_SERVICE_ACCOUNT_KEY_PATH',
-    );
-    const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
-    const clientSecret = this.configService.get<string>('GOOGLE_CLIENT_SECRET');
-    const refreshToken = this.configService.get<string>('GOOGLE_REFRESH_TOKEN');
-
-    if (serviceAccountKeyPath) {
-      const auth = new google.auth.GoogleAuth({
-        keyFile: serviceAccountKeyPath,
-        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-      });
-      this.sheets = google.sheets({ version: 'v4', auth });
-      this.logger.log('Sheets: Using Service Account authentication');
-    } else if (clientId && clientSecret && refreshToken) {
-      const auth = new google.auth.OAuth2(clientId, clientSecret);
-      auth.setCredentials({ refresh_token: refreshToken });
-      this.sheets = google.sheets({ version: 'v4', auth });
-      this.logger.log('Sheets: Using OAuth2 authentication');
-    } else {
-      throw new Error(
-        'Missing Google Sheets credentials. Set either GOOGLE_SHEETS_SERVICE_ACCOUNT_KEY_PATH OR GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET/GOOGLE_REFRESH_TOKEN.',
-      );
-    }
-  }
+ constructor(
+  private readonly configService: ConfigService,
+  private readonly googleAuthService: GoogleAuthService,
+) {
+  this.sheets = google.sheets({
+    version: 'v4',
+    auth: this.googleAuthService.getClient(),
+  });
+  this.logger.log('Sheets: Using shared service account authentication');
+}
 
   private getSpreadsheetId(): string {
     const id = this.configService.get<string>('GOOGLE_SHEET_ID');
