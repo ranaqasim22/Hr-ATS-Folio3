@@ -573,7 +573,7 @@ ${JSON.stringify(formattedEvents)}
     return normalized;
   }
 
-  private mapEventToDto(event: any, aiResult: any): CalendarEventDto | null {
+   private mapEventToDto(event: any, aiResult: any): CalendarEventDto | null {
     const isCancelled = event.status === 'cancelled';
     const summary: string = event.summary || '';
 
@@ -598,28 +598,48 @@ ${JSON.stringify(formattedEvents)}
 
     const time = timeWithOffset ? timeWithOffset.slice(0, 5) : '';
 
-    const interviewerLineMatch = description.match(INTERVIEWER_LINE_REGEX);
-
-    let interviewers: string[] = [];
-
-    if (interviewerLineMatch) {
-      interviewers = interviewerLineMatch[1]
-        .split(',')
-        .map((name) => name.trim())
-        .filter(Boolean);
-    } else if (Array.isArray(aiResult.interviewers)) {
-      interviewers = aiResult.interviewers.map((item: any) => String(item).trim()).filter(Boolean);
-    }
-
+    // --- Recruiter: always the event creator/organizer (whoever booked it) ---
     const recruiter = aiResult.recruiter || this.extractRecruiter(event, attendees);
 
+    // --- Candidate email: from Groq/description, same as before ---
     const phoneMatch = description.match(PHONE_REGEX);
-
     const contactNumber = aiResult.contactNumber || (phoneMatch ? phoneMatch[1].trim() : '');
 
     const emailMatches = description.match(EMAIL_REGEX) || [];
-
     const emailAddress = aiResult.emailAddress || emailMatches[0] || '';
+
+    // --- Interviewers: deterministically = every calendar guest EXCEPT the
+    // organizer/recruiter and the candidate. This runs the same way on
+    // create AND update, so no more inconsistency between the two. ---
+    const excludedEmails = new Set(
+      [event.organizer?.email, recruiter, emailAddress]
+        .filter(Boolean)
+        .map((e: string) => e.toLowerCase().trim()),
+    );
+
+    const attendeeEmails = attendees
+      .map((a: any) => (a.email || '').trim())
+      .filter(Boolean)
+      .filter((email: string) => !excludedEmails.has(email.toLowerCase()));
+
+    // Fallback to the old description-line / Groq-guessed interviewers only
+    // if the event genuinely has no guests at all (edge case).
+    let interviewers: string[] = attendeeEmails;
+
+    if (interviewers.length === 0 && attendees.length === 0) {
+      const interviewerLineMatch = description.match(INTERVIEWER_LINE_REGEX);
+
+      if (interviewerLineMatch) {
+        interviewers = interviewerLineMatch[1]
+          .split(',')
+          .map((name) => name.trim())
+          .filter(Boolean);
+      } else if (Array.isArray(aiResult.interviewers)) {
+        interviewers = aiResult.interviewers
+          .map((item: any) => String(item).trim())
+          .filter(Boolean);
+      }
+    }
 
     const resumeLink =
       aiResult.resumeLink ||

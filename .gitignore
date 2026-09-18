@@ -1,4 +1,4 @@
-service-account.json
+service-account-key.json
 .env
 # Dependencies
 node_modules/
