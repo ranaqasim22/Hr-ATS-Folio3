@@ -599,18 +599,41 @@ ${JSON.stringify(formattedEvents)}
     const time = timeWithOffset ? timeWithOffset.slice(0, 5) : '';
 
     // --- Recruiter: always the event creator/organizer (whoever booked it) ---
+    // --- Recruiter: always the event creator/organizer (whoever booked it) ---
     const recruiter = aiResult.recruiter || this.extractRecruiter(event, attendees);
 
-    // --- Candidate email: from Groq/description, same as before ---
+    // --- Determine the company domain from the organizer/recruiter's email.
+    // Internal staff (recruiter + interviewers) share this domain; the
+    // candidate's email is external (personal Gmail, Yahoo, etc). ---
+    const companyDomain = (event.organizer?.email || recruiter || '')
+      .split('@')[1]
+      ?.toLowerCase()
+      .trim();
+
+    const isInternalEmail = (email: string): boolean => {
+      if (!companyDomain) return true; // safety: if we can't tell, don't wrongly exclude
+      return email.toLowerCase().endsWith(`@${companyDomain}`);
+    };
+
+    // --- Candidate email: prefer Groq/description if it found one explicitly.
+    // Otherwise, fall back to the one attendee whose email is NOT on the
+    // company domain — that's almost always the candidate. ---
     const phoneMatch = description.match(PHONE_REGEX);
     const contactNumber = aiResult.contactNumber || (phoneMatch ? phoneMatch[1].trim() : '');
 
     const emailMatches = description.match(EMAIL_REGEX) || [];
-    const emailAddress = aiResult.emailAddress || emailMatches[0] || '';
+    let emailAddress = aiResult.emailAddress || emailMatches[0] || '';
 
-    // --- Interviewers: deterministically = every calendar guest EXCEPT the
-    // organizer/recruiter and the candidate. This runs the same way on
-    // create AND update, so no more inconsistency between the two. ---
+    if (!emailAddress) {
+      const externalAttendee = attendees.find(
+        (a: any) => a.email && !isInternalEmail(a.email.trim()),
+      );
+      emailAddress = externalAttendee?.email?.trim() || '';
+    }
+
+    // --- Interviewers: every attendee EXCEPT the organizer/recruiter and
+    // the candidate. Uses the same internal/external split so it works
+    // consistently on create AND update. ---
     const excludedEmails = new Set(
       [event.organizer?.email, recruiter, emailAddress]
         .filter(Boolean)
@@ -622,8 +645,6 @@ ${JSON.stringify(formattedEvents)}
       .filter(Boolean)
       .filter((email: string) => !excludedEmails.has(email.toLowerCase()));
 
-    // Fallback to the old description-line / Groq-guessed interviewers only
-    // if the event genuinely has no guests at all (edge case).
     let interviewers: string[] = attendeeEmails;
 
     if (interviewers.length === 0 && attendees.length === 0) {
