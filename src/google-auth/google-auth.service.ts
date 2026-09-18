@@ -5,16 +5,17 @@ import { google } from 'googleapis';
 /**
  * GoogleAuthService
  * ------------------
- * Single, shared OAuth2 client for the whole app.
- * - Reads GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN from .env
- * - Creates exactly ONE OAuth2Client instance (constructor runs once because
+ * Single, shared service account (JWT) client for the whole app.
+ * - Reads GOOGLE_SERVICE_ACCOUNT_KEY_PATH from .env
+ * - Creates exactly ONE JWT client instance (constructor runs once because
  *   this service + its module are marked @Global() and only ever provided once)
  * - Exposes getAccessToken() which returns a fresh access token,
- *   refreshing automatically via the refresh_token when needed.
+ *   refreshing automatically as needed.
  *
- * Because this is @Global(), every other module (CalendarService, etc.)
- * can inject GoogleAuthService without re-importing GoogleAuthModule,
- * and without ever triggering a second OAuth flow on startup.
+ * Because this is @Global(), every other module (CalendarService,
+ * SheetsService, DriveService, etc.) can inject GoogleAuthService
+ * without re-importing GoogleAuthModule, and without ever creating
+ * a second client instance.
  */
 @Injectable()
 export class GoogleAuthService implements OnModuleInit {
