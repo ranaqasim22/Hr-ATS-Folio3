@@ -44,11 +44,21 @@ export class TrackerService
 
   onModuleInit() {
     /**
-     * Startup par FULL sync.
+     * Startup par bhi SIRF recent-window wale events process hote hain —
+     * poora calendar backfill/reprocess nahi. Pehle yahan recentOnly=false
+     * (full sync) tha, jo restart pe HAR baar poori 60-din range ke tamam
+     * events dobara Drive/Groq/Sheets se guzarta tha — chahe wo events
+     * pehle se Sheet mein sahi/up-to-date stored hon. Isse Groq tokens
+     * fazol use hote thay aur restart bhi bohat slow hota tha.
      *
-     * false = recentOnly false
+     * Ab startup aur interval dono EXACTLY wahi behavior follow karte
+     * hain: sirf jo event pichle RECENT_WINDOW_MINUTES mein naya bana,
+     * update hua, ya delete hua — sirf wahi Sheet mein create/update
+     * hota hai. Baqi sab (already-synced) skip ho jate hain.
+     *
+     * true = recentOnly true
      */
-    this.sync(false).catch((error) => {
+    this.sync(true).catch((error) => {
       this.logger.error(
         `Startup sync failed: ${
           error instanceof Error
@@ -60,13 +70,13 @@ export class TrackerService
 
     /**
      * Interval:
-     * SYNC_INTERVAL_MINUTES
+     * RECENT_WINDOW_MINUTES
      *
      * Example:
-     * SYNC_INTERVAL_MINUTES=2
+     * RECENT_WINDOW_MINUTES=2
      */
     const intervalMinutes = Number(
-      process.env.SYNC_INTERVAL_MINUTES ?? 0,
+      process.env.RECENT_WINDOW_MINUTES ?? 0,
     );
 
     if (intervalMinutes > 0) {

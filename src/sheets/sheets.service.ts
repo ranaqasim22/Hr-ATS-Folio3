@@ -18,7 +18,7 @@ export class SheetsService {
   constructor(private readonly configService: ConfigService) {
     // --- Smart Auth Logic: OAuth2 OR Service Account ---
     const serviceAccountKeyPath = this.configService.get<string>(
-      'GOOGLE_SHEETS_SERVICE_ACCOUNT_KEY_PATH',
+      'GOOGLE_SERVICE_ACCOUNT_KEY_PATH',
     );
     const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
     const clientSecret = this.configService.get<string>('GOOGLE_CLIENT_SECRET');
@@ -38,7 +38,7 @@ export class SheetsService {
       this.logger.log('Sheets: Using OAuth2 authentication');
     } else {
       throw new Error(
-        'Missing Google Sheets credentials. Set either GOOGLE_SHEETS_SERVICE_ACCOUNT_KEY_PATH OR GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET/GOOGLE_REFRESH_TOKEN.',
+        'Missing Google Sheets credentials. Set either GOOGLE_SERVICE_ACCOUNT_KEY_PATH OR GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET/GOOGLE_REFRESH_TOKEN.',
       );
     }
   }

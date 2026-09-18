@@ -32,6 +32,14 @@ export class CalendarService {
   // Configurable via RECENT_WINDOW_MINUTES in .env (defaults to 15).
   private readonly RECENT_WINDOW_MS: number;
 
+  // Which calendar to read events from. With Service Account auth there is
+  // no "primary" calendar of a logged-in user, so this must point at a real
+  // calendar ID that has been shared with the Service Account's email (or
+  // the impersonated user's calendar, if using domain-wide delegation).
+  // Configurable via CALENDAR_ID in .env; defaults to 'primary' for
+  // backward compatibility (only meaningful when impersonating a user).
+  private readonly CALENDAR_ID: string;
+
   constructor(
     private readonly googleAuthService: GoogleAuthService,
     private readonly configService: ConfigService,
@@ -57,6 +65,9 @@ export class CalendarService {
     this.RECENT_WINDOW_MS = windowMinutes * 60 * 1000;
 
     this.logger.log(`Recent event window set to ${windowMinutes} minute(s).`);
+
+    this.CALENDAR_ID = this.configService.get<string>('CALENDAR_ID') || 'primary';
+    this.logger.log(`Reading events from calendar: ${this.CALENDAR_ID}`);
 
     // Primary key is required. GROQ_API_KEY_2 (and beyond, if you ever
     // add GROQ_API_KEY_3 etc.) is optional — add as many as you have.
@@ -93,7 +104,7 @@ export class CalendarService {
       showDeleted: 'true',
     });
 
-    const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params.toString()}`;
+    const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(this.CALENDAR_ID)}/events?${params.toString()}`;
 
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${access_token}` },
@@ -114,12 +125,19 @@ export class CalendarService {
 
     // Only keep events that were created OR updated (which also covers
     // cancellations, since Google bumps `updated` on delete) within the
-    // last 15 minutes. This runs BEFORE the Groq call so we never spend
-    // Groq calls on events that would just get filtered out afterwards.
-    const recentHrEvents = hrEvents.filter((event) => this.isEventRecent(event));
+    // configured recent window. This runs BEFORE the Groq call so we never
+    // spend Groq calls on events that would just get filtered out
+    // afterwards. Skipped entirely when recentOnly=false (full sync) —
+    // otherwise a "full sync" would silently still only catch events
+    // touched in the last few minutes, defeating its own purpose.
+    const recentHrEvents = recentOnly
+      ? hrEvents.filter((event) => this.isEventRecent(event))
+      : hrEvents;
 
     this.logger.log(
-      `${recentHrEvents.length} of ${hrEvents.length} HR events are within the last 15 minutes — only these go to Groq`,
+      recentOnly
+        ? `${recentHrEvents.length} of ${hrEvents.length} HR events are within the recent window — only these go to Groq`
+        : `Full sync: all ${recentHrEvents.length} HR events go to Groq (recency filter skipped)`,
     );
 
     const cancelledEvents = recentHrEvents.filter(
@@ -170,7 +188,7 @@ export class CalendarService {
     });
 
     this.logger.log(
-      `Fetched ${events.length} events, ${hrEvents.length} HR events, ${parsed.length} interview events shown (last 15 min window)`,
+      `Fetched ${events.length} events, ${hrEvents.length} HR events, ${parsed.length} interview events shown (${recentOnly ? 'recent window' : 'full sync, no recency filter'})`,
     );
 
     // No extra filtering needed here — we already restricted to the
