@@ -21,30 +21,20 @@ export class CalendarService {
 
   private readonly HR_SCHEDULING_EMAIL: string;
 
-  // Multiple Groq keys let us keep going once one key's daily token quota
-  // runs out — we just rotate to the next key instead of failing outright.
   private readonly GROQ_API_KEYS: string[];
   private currentGroqKeyIndex = 0;
 
-  // Only events created/updated/cancelled within this window are shown by
-  // this endpoint. Full history is not this endpoint's job — that lives in
-  // the Sheet, which keeps everything and applies just the delta each run.
-  // Configurable via RECENT_WINDOW_MINUTES in .env (defaults to 15).
   private readonly RECENT_WINDOW_MS: number;
 
-  // Which calendar to read events from. With Service Account auth there is
-  // no "primary" calendar of a logged-in user, so this must point at a real
-  // calendar ID that has been shared with the Service Account's email (or
-  // the impersonated user's calendar, if using domain-wide delegation).
-  // Configurable via CALENDAR_ID in .env; defaults to 'primary' for
-  // backward compatibility (only meaningful when impersonating a user).
   private readonly CALENDAR_ID: string;
 
   constructor(
     private readonly googleAuthService: GoogleAuthService,
     private readonly configService: ConfigService,
   ) {
-    const configuredEmail = this.configService.get<string>('HR_SCHEDULING_EMAIL');
+    const configuredEmail = this.configService.get<string>(
+      'HR_SCHEDULING_EMAIL',
+    );
     if (!configuredEmail) {
       throw new Error(
         'HR_SCHEDULING_EMAIL is not set in .env — please set it before starting the app.',
@@ -52,7 +42,9 @@ export class CalendarService {
     }
     this.HR_SCHEDULING_EMAIL = configuredEmail;
 
-    const configuredWindowMinutes = this.configService.get<string>('RECENT_WINDOW_MINUTES');
+    const configuredWindowMinutes = this.configService.get<string>(
+      'RECENT_WINDOW_MINUTES',
+    );
     const parsedWindowMinutes = configuredWindowMinutes
       ? Number(configuredWindowMinutes)
       : NaN;
@@ -66,11 +58,10 @@ export class CalendarService {
 
     this.logger.log(`Recent event window set to ${windowMinutes} minute(s).`);
 
-    this.CALENDAR_ID = this.configService.get<string>('CALENDAR_ID') || 'primary';
+    this.CALENDAR_ID =
+      this.configService.get<string>('CALENDAR_ID') || 'primary';
     this.logger.log(`Reading events from calendar: ${this.CALENDAR_ID}`);
 
-    // Primary key is required. GROQ_API_KEY_2 (and beyond, if you ever
-    // add GROQ_API_KEY_3 etc.) is optional — add as many as you have.
     const groqKey = this.configService.get<string>('GROQ_API_KEY');
     if (!groqKey) {
       throw new Error(
@@ -80,21 +71,21 @@ export class CalendarService {
 
     const groqKey2 = this.configService.get<string>('GROQ_API_KEY_2');
 
-    this.GROQ_API_KEYS = [groqKey, groqKey2].filter(
-      (key): key is string => Boolean(key && key.trim()),
+    this.GROQ_API_KEYS = [groqKey, groqKey2].filter((key): key is string =>
+      Boolean(key && key.trim()),
     );
 
-    this.logger.log(`Groq: ${this.GROQ_API_KEYS.length} API key(s) configured for rotation.`);
+    this.logger.log(
+      `Groq: ${this.GROQ_API_KEYS.length} API key(s) configured for rotation.`,
+    );
   }
 
   async getInterviewEvents(
-  timeMin: Date = new Date(),
-  timeMax: Date = new Date(
-    Date.now() + 30 * 24 * 60 * 60 * 1000,
-  ),
-  options: { recentOnly?: boolean } = {},
-): Promise<CalendarEventDto[]> {
-  const recentOnly = options.recentOnly !== false;
+    timeMin: Date = new Date(),
+    timeMax: Date = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    options: { recentOnly?: boolean } = {},
+  ): Promise<CalendarEventDto[]> {
+    const recentOnly = options.recentOnly !== false;
     const access_token = await this.googleAuthService.getAccessToken();
 
     const params = new URLSearchParams({
@@ -121,15 +112,10 @@ export class CalendarService {
 
     const hrEvents = events.filter((event) => this.isRelevantEvent(event));
 
-    this.logger.log(`Fetched ${events.length} events, ${hrEvents.length} HR events`);
+    this.logger.log(
+      `Fetched ${events.length} events, ${hrEvents.length} HR events`,
+    );
 
-    // Only keep events that were created OR updated (which also covers
-    // cancellations, since Google bumps `updated` on delete) within the
-    // configured recent window. This runs BEFORE the Groq call so we never
-    // spend Groq calls on events that would just get filtered out
-    // afterwards. Skipped entirely when recentOnly=false (full sync) —
-    // otherwise a "full sync" would silently still only catch events
-    // touched in the last few minutes, defeating its own purpose.
     const recentHrEvents = recentOnly
       ? hrEvents.filter((event) => this.isEventRecent(event))
       : hrEvents;
@@ -154,7 +140,9 @@ export class CalendarService {
 
     const batches = this.createBatches(eventsForGroq, GROQ_BATCH_SIZE);
 
-    this.logger.log(`Processing ${eventsForGroq.length} events in ${batches.length} Groq batches`);
+    this.logger.log(
+      `Processing ${eventsForGroq.length} events in ${batches.length} Groq batches`,
+    );
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const batch = batches[batchIndex];
@@ -191,8 +179,6 @@ export class CalendarService {
       `Fetched ${events.length} events, ${hrEvents.length} HR events, ${parsed.length} interview events shown (${recentOnly ? 'recent window' : 'full sync, no recency filter'})`,
     );
 
-    // No extra filtering needed here — we already restricted to the
-    // recent window before doing any Groq work above.
     return parsed;
   }
 
@@ -224,7 +210,9 @@ export class CalendarService {
   private hasHrScheduling(event: any): boolean {
     const attendees = event.attendees || [];
     return attendees.some(
-      (a: any) => (a.email || '').toLowerCase() === this.HR_SCHEDULING_EMAIL.toLowerCase(),
+      (a: any) =>
+        (a.email || '').toLowerCase() ===
+        this.HR_SCHEDULING_EMAIL.toLowerCase(),
     );
   }
 
@@ -240,20 +228,16 @@ export class CalendarService {
     return diff > 5000 ? 'Updated' : 'Active'; // 5 second buffer
   }
 
-  /**
-   * Raw-Google-event check (used BEFORE Groq is called): true if the
-   * event was created or updated (Google also bumps `updated` when an
-   * event is cancelled/deleted) within the last RECENT_WINDOW_MS.
-   * This is what decides whether an event is even worth sending to Groq.
-   */
   private isEventRecent(event: any): boolean {
     const createdTs = event.created ? new Date(event.created).getTime() : NaN;
     const updatedTs = event.updated ? new Date(event.updated).getTime() : NaN;
 
     const now = Date.now();
 
-    const createdRecent = !Number.isNaN(createdTs) && now - createdTs <= this.RECENT_WINDOW_MS;
-    const updatedRecent = !Number.isNaN(updatedTs) && now - updatedTs <= this.RECENT_WINDOW_MS;
+    const createdRecent =
+      !Number.isNaN(createdTs) && now - createdTs <= this.RECENT_WINDOW_MS;
+    const updatedRecent =
+      !Number.isNaN(updatedTs) && now - updatedTs <= this.RECENT_WINDOW_MS;
 
     return createdRecent || updatedRecent;
   }
@@ -305,7 +289,9 @@ export class CalendarService {
     const formattedEvents = events.map((event, index) => {
       const description = this.cleanDescription(event.description || '');
 
-      const attendees = (event.attendees || []).map((a: any) => a.email).filter(Boolean);
+      const attendees = (event.attendees || [])
+        .map((a: any) => a.email)
+        .filter(Boolean);
 
       return {
         index,
@@ -408,85 +394,88 @@ ${JSON.stringify(formattedEvents)}
 `;
 
     for (let attempt = 0; attempt <= MAX_GROQ_RETRIES; attempt++) {
-      // Try every configured key once per attempt before falling back to
-      // a timed wait — this is what lets a second key pick up the slack
-      // the moment the first key's quota/rate-limit kicks in.
       let lastErrorText = '';
 
       for (let keyTry = 0; keyTry < this.GROQ_API_KEYS.length; keyTry++) {
         const apiKey = this.GROQ_API_KEYS[this.currentGroqKeyIndex];
 
         try {
-          const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'openai/gpt-oss-120b',
-            messages: [
-              {
-                role: 'system',
-                content: 'You are a precise HR interview event parser. Return only valid JSON.',
+          const response = await fetch(
+            'https://api.groq.com/openai/v1/chat/completions',
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
               },
-              {
-                role: 'user',
-                content: prompt,
-              },
-            ],
-            temperature: 0,
-            response_format: {
-              type: 'json_object',
+              body: JSON.stringify({
+                model: 'openai/gpt-oss-120b',
+                messages: [
+                  {
+                    role: 'system',
+                    content:
+                      'You are a precise HR interview event parser. Return only valid JSON.',
+                  },
+                  {
+                    role: 'user',
+                    content: prompt,
+                  },
+                ],
+                temperature: 0,
+                response_format: {
+                  type: 'json_object',
+                },
+              }),
             },
-          }),
-        });
+          );
 
-        if (response.ok) {
-          const data: any = await response.json();
-          const content = data?.choices?.[0]?.message?.content;
+          if (response.ok) {
+            const data: any = await response.json();
+            const content = data?.choices?.[0]?.message?.content;
 
-          if (!content) {
-            this.logger.warn('Groq returned an empty batch response.');
-            return events.map(() => ({}));
-          }
-
-          try {
-            const parsed = JSON.parse(content);
-
-            if (Array.isArray(parsed)) {
-              return this.normalizeBatchResults(parsed, events.length);
+            if (!content) {
+              this.logger.warn('Groq returned an empty batch response.');
+              return events.map(() => ({}));
             }
 
-            if (Array.isArray(parsed.events)) {
-              return this.normalizeBatchResults(parsed.events, events.length);
-            }
+            try {
+              const parsed = JSON.parse(content);
 
-            if (Array.isArray(parsed.results)) {
-              return this.normalizeBatchResults(parsed.results, events.length);
-            }
-
-            // Fallback: some models return an object keyed by index instead
-            // of an array, e.g. { "0": {...}, "1": {...} }.
-            if (parsed && typeof parsed === 'object') {
-              const values = Object.values(parsed);
-              const looksLikeIndexedResults = values.every(
-                (v) => v && typeof v === 'object' && 'isInterview' in (v as any),
-              );
-
-              if (values.length > 0 && looksLikeIndexedResults) {
-                return this.normalizeBatchResults(values, events.length);
+              if (Array.isArray(parsed)) {
+                return this.normalizeBatchResults(parsed, events.length);
               }
-            }
 
-            this.logger.warn(
-              `Groq batch response does not contain a recognizable events array. Raw content: ${content}`,
-            );
-            return events.map(() => ({}));
-          } catch {
-            this.logger.error(`Groq returned invalid JSON: ${content}`);
-            return events.map(() => ({}));
-          }
+              if (Array.isArray(parsed.events)) {
+                return this.normalizeBatchResults(parsed.events, events.length);
+              }
+
+              if (Array.isArray(parsed.results)) {
+                return this.normalizeBatchResults(
+                  parsed.results,
+                  events.length,
+                );
+              }
+
+              if (parsed && typeof parsed === 'object') {
+                const values = Object.values(parsed);
+                const looksLikeIndexedResults = values.every(
+                  (v) =>
+                    v && typeof v === 'object' && 'isInterview' in (v as any),
+                );
+
+                if (values.length > 0 && looksLikeIndexedResults) {
+                  return this.normalizeBatchResults(values, events.length);
+                }
+              }
+
+              this.logger.warn(
+                `Groq batch response does not contain a recognizable events array. Raw content: ${content}`,
+              );
+              return events.map(() => ({}));
+            } catch {
+              this.logger.error(`Groq returned invalid JSON: ${content}`);
+              return events.map(() => ({}));
+            }
           }
 
           if (response.status === 429) {
@@ -504,12 +493,9 @@ ${JSON.stringify(formattedEvents)}
               continue; // inner keyTry loop — try the next key right away
             }
 
-            // Only one key configured, nothing to rotate to — fall through
-            // to the outer attempt loop's timed backoff below.
             break;
           }
 
-          // Non-429 error — no point rotating keys or retrying, bail out.
           const errorText = await response.text();
           this.logger.error(`Groq API error ${response.status}: ${errorText}`);
           return events.map(() => ({}));
@@ -524,9 +510,6 @@ ${JSON.stringify(formattedEvents)}
         }
       }
 
-      // If we got here (without returning above), every configured key
-      // was rate-limited this round — back off and try the full key
-      // rotation again.
       if (attempt < MAX_GROQ_RETRIES) {
         this.logger.warn(
           `All ${this.GROQ_API_KEYS.length} Groq key(s) rate-limited. Batch retry ${attempt + 1}/${MAX_GROQ_RETRIES}.`,
@@ -544,7 +527,9 @@ ${JSON.stringify(formattedEvents)}
           }
         }
 
-        this.logger.warn(`Waiting ${Math.ceil(waitTime / 1000)} seconds before retry.`);
+        this.logger.warn(
+          `Waiting ${Math.ceil(waitTime / 1000)} seconds before retry.`,
+        );
 
         await this.sleep(waitTime);
 
@@ -573,12 +558,14 @@ ${JSON.stringify(formattedEvents)}
     return normalized;
   }
 
-   private mapEventToDto(event: any, aiResult: any): CalendarEventDto | null {
+  private mapEventToDto(event: any, aiResult: any): CalendarEventDto | null {
     const isCancelled = event.status === 'cancelled';
     const summary: string = event.summary || '';
 
     if (!aiResult || Object.keys(aiResult).length === 0) {
-      this.logger.debug(`Skipping event because Groq returned no result: "${summary}"`);
+      this.logger.debug(
+        `Skipping event because Groq returned no result: "${summary}"`,
+      );
       return null;
     }
 
@@ -590,7 +577,8 @@ ${JSON.stringify(formattedEvents)}
     const attendees = event.attendees || [];
     const description = this.cleanDescription(event.description || '');
 
-    const startDateTime: string = event.start?.dateTime || event.start?.date || '';
+    const startDateTime: string =
+      event.start?.dateTime || event.start?.date || '';
 
     const [date, timeWithOffset] = startDateTime.includes('T')
       ? startDateTime.split('T')
@@ -598,13 +586,9 @@ ${JSON.stringify(formattedEvents)}
 
     const time = timeWithOffset ? timeWithOffset.slice(0, 5) : '';
 
-    // --- Recruiter: always the event creator/organizer (whoever booked it) ---
-    // --- Recruiter: always the event creator/organizer (whoever booked it) ---
-    const recruiter = aiResult.recruiter || this.extractRecruiter(event, attendees);
+    const recruiter =
+      aiResult.recruiter || this.extractRecruiter(event, attendees);
 
-    // --- Determine the company domain from the organizer/recruiter's email.
-    // Internal staff (recruiter + interviewers) share this domain; the
-    // candidate's email is external (personal Gmail, Yahoo, etc). ---
     const companyDomain = (event.organizer?.email || recruiter || '')
       .split('@')[1]
       ?.toLowerCase()
@@ -615,11 +599,9 @@ ${JSON.stringify(formattedEvents)}
       return email.toLowerCase().endsWith(`@${companyDomain}`);
     };
 
-    // --- Candidate email: prefer Groq/description if it found one explicitly.
-    // Otherwise, fall back to the one attendee whose email is NOT on the
-    // company domain — that's almost always the candidate. ---
     const phoneMatch = description.match(PHONE_REGEX);
-    const contactNumber = aiResult.contactNumber || (phoneMatch ? phoneMatch[1].trim() : '');
+    const contactNumber =
+      aiResult.contactNumber || (phoneMatch ? phoneMatch[1].trim() : '');
 
     const emailMatches = description.match(EMAIL_REGEX) || [];
     let emailAddress = aiResult.emailAddress || emailMatches[0] || '';
@@ -631,9 +613,6 @@ ${JSON.stringify(formattedEvents)}
       emailAddress = externalAttendee?.email?.trim() || '';
     }
 
-    // --- Interviewers: every attendee EXCEPT the organizer/recruiter and
-    // the candidate. Uses the same internal/external split so it works
-    // consistently on create AND update. ---
     const excludedEmails = new Set(
       [event.organizer?.email, recruiter, emailAddress]
         .filter(Boolean)
